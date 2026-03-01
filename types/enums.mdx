@@ -1,0 +1,389 @@
+---
+title: Enums
+description: Define enumerated types with a predefined set of allowed string values
+---
+
+Enums are leaf types that represent a fixed set of possible values. They work like string scalars but only accept predefined values, making them perfect for categories, statuses, and other constrained choices.
+
+## Basic Enum Definition
+
+Define enums in files or inline within your schema:
+
+<CodeGroup>
+```ruby File-based Definition
+# app/graphql/enums/role.rb
+module GraphQL
+  class Role < GraphQL::Enum
+    add 'ADMIN'
+    add 'SUPPORT'
+    add 'USER'
+  end
+end
+```
+
+```ruby Schema Definition
+# app/graphql/app_schema.rb
+enum 'Role' do
+  add 'ADMIN'
+  add 'SUPPORT'
+  add 'USER'
+end
+
+# OR shorthand with symbols
+enum 'Role', values: %i[admin support user]
+```
+</CodeGroup>
+
+The resulting GraphQL type:
+
+```graphql
+enum Role {
+  ADMIN
+  SUPPORT
+  USER
+}
+```
+
+<Tip>
+Values are automatically converted to uppercase strings, so `:admin`, `'admin'`, and `'ADMIN'` all create the same `ADMIN` value.
+</Tip>
+
+## Adding Values
+
+Use the `add` method to define enum values:
+
+```ruby
+enum 'Role' do
+  # All equivalent - values are uppercased
+  add :admin
+  add 'support'
+  add 'USER'
+end
+```
+
+### Value Descriptions
+
+Document individual values:
+
+```ruby Star Wars Episodes
+enum 'Episode' do
+  desc 'One of the films in the Star Wars Trilogy'
+  
+  add 'NEW_HOPE', desc: 'Released in 1977.'
+  add 'EMPIRE',   desc: 'Released in 1980.'
+  add 'JEDI',     desc: 'Released in 1983.'
+end
+```
+
+### Deprecating Values
+
+Mark values as deprecated:
+
+```ruby
+enum 'Role' do
+  add 'ADMIN'
+  add 'SUPPORT', deprecated: 'Use ADMIN instead'
+  add 'LEGACY_USER', deprecated: true
+end
+```
+
+### Value Directives
+
+Attach custom directives to values:
+
+```ruby
+enum 'Status' do
+  add 'ACTIVE'
+  add 'ARCHIVED', directives: GraphQL::DeprecatedDirective.new
+end
+```
+
+## Index-based Enums
+
+For numeric-based enums in your application, use `indexed!` to enable automatic conversion:
+
+```ruby
+enum 'Priority' do
+  add 'LOW'
+  add 'MEDIUM'
+  add 'HIGH'
+  
+  indexed!
+end
+```
+
+<CodeGroup>
+```ruby Before indexed!
+GraphQL::Priority.as_json(0)     # => "0"
+GraphQL::Priority.valid_output?(0) # => false
+```
+
+```ruby After indexed!
+GraphQL::Priority.as_json(0)     # => "LOW"
+GraphQL::Priority.valid_output?(0) # => true
+GraphQL::Priority.as_json(2)     # => "HIGH"
+```
+</CodeGroup>
+
+<Warning>
+Indexed enums only affect output. Input must always use uppercase string values, even for indexed enums.
+</Warning>
+
+## Using Enums
+
+Enums work as both input and output types:
+
+### As Output Fields
+
+```ruby
+object 'User' do
+  field :id
+  field :name
+  field :role, 'Role'
+end
+```
+
+### As Input Arguments
+
+```ruby
+mutation_fields do
+  field :create_user, 'User', null: false do
+    argument :name, :string, null: false
+    argument :role, 'Role', null: false
+  end
+end
+```
+
+### In Queries
+
+```graphql Mutation Example
+mutation {
+  createUser(name: "John Doe", role: ADMIN) {
+    id
+    name
+    role
+  }
+}
+```
+
+```json Response
+{
+  "data": {
+    "createUser": {
+      "id": "1",
+      "name": "John Doe",
+      "role": "ADMIN"
+    }
+  }
+}
+```
+
+## Enum Instances
+
+When received as input, enums are instances with helpful methods:
+
+```ruby
+def create_user(name:, role:)
+  # role is a GraphQL::Role instance
+  
+  role.to_s              # => "ADMIN"
+  role.to_sym            # => :admin
+  role.to_i              # => 0 (index position)
+  role.deprecated?       # => false
+  role.deprecated_reason # => nil
+  role.description       # => "Has superpowers" (if set)
+end
+```
+
+### Instance Methods
+
+<ResponseField name="to_s" type="String">
+  Returns the plain string value: `"ADMIN"`
+</ResponseField>
+
+<ResponseField name="to_sym" type="Symbol">
+  Returns a lowercase symbol: `:admin`
+</ResponseField>
+
+<ResponseField name="to_i" type="Integer">
+  Returns the index position (0-based): `0`
+</ResponseField>
+
+<ResponseField name="valid?" type="Boolean">
+  Checks if the value is valid for this enum
+</ResponseField>
+
+<ResponseField name="deprecated?" type="Boolean">
+  Returns `true` if the value has a deprecated directive
+</ResponseField>
+
+<ResponseField name="deprecated_reason" type="String | nil">
+  Returns the deprecation reason if deprecated
+</ResponseField>
+
+<ResponseField name="description" type="String | nil">
+  Returns the value's description if set
+</ResponseField>
+
+## Common Patterns
+
+### Query Filters
+
+```ruby
+enum 'Episode', values: %i[new_hope empire jedi]
+
+query_fields do
+  field :hero, 'Character' do
+    argument :episode, 'Episode',
+      desc: 'Return for a specific episode'
+  end
+end
+
+def hero(episode:)
+  episode.to_i === 1 ? luke_skywalker : r2d2
+end
+```
+
+### Status Fields
+
+```ruby
+enum 'OrderStatus' do
+  add 'PENDING'
+  add 'PROCESSING'
+  add 'SHIPPED'
+  add 'DELIVERED'
+  add 'CANCELLED'
+end
+
+object 'Order' do
+  field :id
+  field :status, 'OrderStatus'
+end
+```
+
+### Sort Directions
+
+```ruby
+enum 'SortOrder', values: %i[asc desc]
+
+query_fields do
+  field :users, 'User', array: true do
+    argument :sort_by, :string
+    argument :order, 'SortOrder', default: 'ASC'
+  end
+end
+```
+
+### Feature Flags
+
+```ruby
+enum 'Feature' do
+  add 'BETA_UI'
+  add 'ADVANCED_SEARCH'
+  add 'LEGACY_DASHBOARD', deprecated: 'Use new dashboard'
+end
+
+object 'User' do
+  field :enabled_features, 'Feature', array: true
+end
+```
+
+## String Input Support
+
+By default, enums only accept enum values (`ADMIN`). Enable string input globally:
+
+```ruby
+# config/initializers/graphql.rb
+Rails::GraphQL.configure do |config|
+  config.allow_string_as_enum_input = true
+end
+```
+
+With this enabled, both are valid:
+
+```graphql
+createUser(role: ADMIN)    # ✓ Enum value
+createUser(role: "ADMIN")  # ✓ String (if enabled)
+```
+
+## Validation
+
+Enums validate input and output automatically:
+
+```ruby
+GraphQL::Role.valid_input?('ADMIN')  # => true
+GraphQL::Role.valid_input?('GUEST')  # => false
+GraphQL::Role.valid_output?('ADMIN') # => true
+```
+
+## Deprecated Values
+
+Track deprecated values:
+
+```ruby
+enum 'Role' do
+  add 'ADMIN'
+  add 'MODERATOR', deprecated: 'Use ADMIN with limited permissions'
+  add 'LEGACY', deprecated: true
+end
+
+GraphQL::Role.all_deprecated_values
+# => { "MODERATOR" => "Use ADMIN with limited permissions", "LEGACY" => true }
+```
+
+## Inspection
+
+Enums provide helpful inspection:
+
+```ruby
+GraphQL::Role.inspect
+# => #<GraphQL::Enum Role (3) {ADMIN | SUPPORT | USER}>
+
+GraphQL::Episode.all_values
+# => ["NEW_HOPE", "EMPIRE", "JEDI"]
+```
+
+## Best Practices
+
+<Check>
+**Use enums for:**
+- Fixed set of options (status, role, category)
+- Sort orders and directions
+- Filter criteria
+- Feature flags
+- Any predefined set of string values
+</Check>
+
+<Warning>
+**Avoid enums for:**
+- Dynamic values that change frequently
+- User-generated content
+- Large sets of values (use strings with validation)
+- Values that need localization at the GraphQL level
+</Warning>
+
+<Tip>
+Enum values are always UPPERCASE in GraphQL, but the instance's `to_sym` method returns lowercase symbols (`:admin`) for easier integration with Rails.
+</Tip>
+
+## Type Checking
+
+```ruby
+def create_user(role:)
+  case role.to_sym
+  when :admin
+    User.create_admin!
+  when :support
+    User.create_support!
+  else
+    User.create!
+  end
+end
+```
+
+## Related Documentation
+
+- [Arguments](/types/arguments) - Use enums as argument types
+- [Fields](/guides/fields) - Use enums as field types
+- [Scalars](/guides/scalars) - Alternative for open-ended string values
+- [Directives](/guides/directives) - Attach to enum values

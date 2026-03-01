@@ -1,0 +1,455 @@
+---
+title: Type
+description: Base class for all GraphQL types including Scalar, Object, Interface, Union, Enum, and Input types
+---
+
+## Overview
+
+The `Rails::GraphQL::Type` class is the foundational object for all GraphQL types in the Rails GraphQL framework. Any schema definition extends from this class.
+
+**Namespace:** `Rails::GraphQL`
+
+**Extends:**
+- `ActiveSupport::Autoload`
+- `Helpers::WithDirectives`
+- `Helpers::WithGlobalID`
+- `Helpers::Registerable`
+
+---
+
+## Type Kinds
+
+The following type kinds are available:
+
+<ResponseField name="KINDS" type="Array<String>">
+  `['Scalar', 'Object', 'Interface', 'Union', 'Enum', 'Input']`
+</ResponseField>
+
+Each kind has its own specialized subclass:
+- `Type::Scalar` - Leaf types representing primitive values
+- `Type::Object` - Object types with fields
+- `Type::Interface` - Abstract types implemented by objects
+- `Type::Union` - Types representing one of several object types
+- `Type::Enum` - Enumeration types with predefined values
+- `Type::Input` - Input object types for arguments
+
+---
+
+## Class Attributes
+
+<ParamField path="base_object" type="Boolean" default="false">
+  Identifies what methods are available to work as resolvers
+</ParamField>
+
+---
+
+## Class Methods
+
+### base_type
+
+Returns the base type class. Will be one of the classes defined in `Type::KINDS`.
+
+**Returns:** `Class` - One of Scalar, Object, Interface, Union, Enum, or Input
+
+```ruby
+User.base_type # => Rails::GraphQL::Type::Object
+```
+
+---
+
+### kind
+
+Return the base type as a symbol.
+
+**Returns:** `Symbol` - `:scalar`, `:object`, `:interface`, `:union`, `:enum`, or `:input`
+
+```ruby
+User.kind # => :object
+String.kind # => :scalar
+```
+
+---
+
+### kind_enum
+
+Return the specific value for the `__TypeKind` enum of this class.
+
+**Returns:** `String` - Uppercase kind name
+
+```ruby
+User.kind_enum # => "OBJECT"
+String.kind_enum # => "SCALAR"
+```
+
+---
+
+### input_type?
+
+Check if the current type is a valid input type.
+
+**Returns:** `Boolean`
+
+```ruby
+UserInput.input_type? # => true
+User.input_type? # => false
+```
+
+---
+
+### output_type?
+
+Check if the current type is a valid output type.
+
+**Returns:** `Boolean`
+
+```ruby
+User.output_type? # => true
+UserInput.output_type? # => false
+```
+
+---
+
+### leaf_type?
+
+Check if the current type is a leaf output type (Scalar or Enum).
+
+**Returns:** `Boolean`
+
+```ruby
+String.leaf_type? # => true
+User.leaf_type? # => false
+```
+
+---
+
+### operational?
+
+Check if the object is a source of operations (Query, Mutation, Subscription).
+
+**Returns:** `Boolean`
+
+```ruby
+type.operational? # => false
+```
+
+---
+
+### =~
+
+Check if another type is equivalent or a subclass.
+
+<ParamField path="other" type="Module | Object" required>
+  Type or instance to compare
+</ParamField>
+
+**Returns:** `Boolean`
+
+**Alias:** `of_type?`
+
+```ruby
+User =~ GraphQL::Type::Object # => true
+user_instance.of_type?(User) # => true
+```
+
+---
+
+### decorate
+
+Helper to instantiate the type if necessary.
+
+<ParamField path="value" type="Any" required>
+  Value to potentially decorate
+</ParamField>
+
+**Returns:** Decorated value or original value
+
+```ruby
+decorated = User.decorate(user_data)
+```
+
+---
+
+### find_by_gid
+
+Find and optionally instantiate a type by its Global ID.
+
+<ParamField path="gid" type="GlobalID" required>
+  The Global ID object
+</ParamField>
+
+**Returns:** Type class or instance
+
+```ruby
+type = Type.find_by_gid(gid)
+```
+
+---
+
+### create!
+
+Dynamically create a new type using the Creator.
+
+<ParamField path="from" type="Schema" required>
+  The schema creating the type
+</ParamField>
+
+<ParamField path="name" type="String | Symbol" required>
+  Name of the type
+</ParamField>
+
+<ParamField path="superclass" type="Class">
+  Parent class (defaults to self)
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional options
+</ParamField>
+
+<ParamField path="configure" type="Block">
+  Configuration block
+</ParamField>
+
+**Returns:** New type class
+
+```ruby
+AddressType = Type.create!(schema, :Address, Type::Object) do
+  field :street, :string
+  field :city, :string
+  field :zip_code, :string
+end
+```
+
+---
+
+### to_gql_backtrace
+
+Generate a summarized representation for backtraces.
+
+**Returns:** `String`
+
+```ruby
+User.to_gql_backtrace # => "#<GraphQL::Object User>"
+```
+
+---
+
+## Type Check Methods
+
+Each type kind has a corresponding question method:
+
+<Expandable title="Type Check Methods">
+
+### scalar?
+
+**Returns:** `Boolean` - `true` if type is a Scalar
+
+### object?
+
+**Returns:** `Boolean` - `true` if type is an Object
+
+### interface?
+
+**Returns:** `Boolean` - `true` if type is an Interface
+
+### union?
+
+**Returns:** `Boolean` - `true` if type is a Union
+
+### enum?
+
+**Returns:** `Boolean` - `true` if type is an Enum
+
+### input?
+
+**Returns:** `Boolean` - `true` if type is an Input
+
+```ruby
+User.object? # => true
+User.scalar? # => false
+String.scalar? # => true
+```
+
+</Expandable>
+
+---
+
+## Instance Methods
+
+### gql_base_type
+
+Delegates to class method `base_type`.
+
+**Returns:** Base type class
+
+---
+
+### gql_kind
+
+Delegates to class method `kind`.
+
+**Returns:** `Symbol`
+
+---
+
+### gql_kind_enum
+
+Delegates to class method `kind_enum`.
+
+**Returns:** `String`
+
+---
+
+### gql_input_type?
+
+Delegates to class method `input_type?`.
+
+**Returns:** `Boolean`
+
+---
+
+### gql_output_type?
+
+Delegates to class method `output_type?`.
+
+**Returns:** `Boolean`
+
+---
+
+### gql_leaf_type?
+
+Delegates to class method `leaf_type?`.
+
+**Returns:** `Boolean`
+
+---
+
+## Protected Methods
+
+### setup!
+
+Provide setup options for child classes. Called internally during type creation.
+
+<ParamField path="kind" type="Symbol">
+  The kind of type
+</ParamField>
+
+<ParamField path="leaf" type="Boolean">
+  Whether this is a leaf type
+</ParamField>
+
+<ParamField path="input" type="Boolean">
+  Whether this is an input type
+</ParamField>
+
+<ParamField path="output" type="Boolean">
+  Whether this is an output type
+</ParamField>
+
+---
+
+### valid_token?
+
+Check if a value is a valid parser token.
+
+<ParamField path="value" type="Any" required>
+  Value to check
+</ParamField>
+
+<ParamField path="type" type="Symbol" default="to_sym">
+  Token type to validate against
+</ParamField>
+
+**Returns:** `Boolean`
+
+---
+
+## Example: Defining Custom Types
+
+### Object Type
+
+```ruby
+class User < Rails::GraphQL::Type::Object
+  desc 'A user in the system'
+
+  field :id, :id, null: false
+  field :name, :string, null: false
+  field :email, :string
+  field :created_at, :datetime, null: false
+
+  field :posts, [Post], null: false do
+    def resolve
+      object.posts
+    end
+  end
+end
+```
+
+### Input Type
+
+```ruby
+class UserInput < Rails::GraphQL::Type::Input
+  desc 'Input for creating a user'
+
+  argument :name, :string, null: false
+  argument :email, :string, null: false
+  argument :password, :string, null: false
+end
+```
+
+### Enum Type
+
+```ruby
+class UserRole < Rails::GraphQL::Type::Enum
+  desc 'User role in the system'
+
+  add :admin, value: 'administrator'
+  add :moderator
+  add :user
+end
+```
+
+### Interface Type
+
+```ruby
+class Node < Rails::GraphQL::Type::Interface
+  desc 'An object with an ID'
+
+  field :id, :id, null: false
+end
+
+class User < Rails::GraphQL::Type::Object
+  implements Node
+
+  field :name, :string
+end
+```
+
+### Scalar Type
+
+```ruby
+class DateTime < Rails::GraphQL::Type::Scalar
+  desc 'ISO 8601 datetime string'
+
+  def self.deserialize(value)
+    Time.iso8601(value)
+  rescue ArgumentError
+    raise GraphQL::InvalidValueError
+  end
+
+  def self.as_json(value)
+    value.iso8601
+  end
+end
+```
+
+---
+
+## Type Registration
+
+Types are automatically registered in the TypeMap when defined. Each type must have a unique name within its namespace.
+
+```ruby
+# Types are automatically available
+schema.find_type(:User) # => User
+schema.find_type!(:Post) # => Post
+```

@@ -1,0 +1,492 @@
+---
+title: Namespaces
+description: Organize multiple GraphQL schemas in a single application while sharing common components across isolated contexts.
+---
+
+## Overview
+
+Namespaces allow you to run multiple GraphQL schemas in the same Rails application. Each schema can have its own set of queries, mutations, and subscriptions while sharing common types and components.
+
+## Use Cases
+
+<CardGroup cols={2}>
+  <Card title="Admin & Client APIs" icon="users">
+    Separate admin operations from public client queries with different permission models.
+  </Card>
+  <Card title="API Versioning" icon="code-branch">
+    Run multiple API versions side-by-side during migrations.
+  </Card>
+  <Card title="Multi-tenant Apps" icon="building">
+    Provide tenant-specific schemas with shared base types.
+  </Card>
+  <Card title="Feature Isolation" icon="box">
+    Isolate experimental features in separate schemas.
+  </Card>
+</CardGroup>
+
+## How Namespaces Work
+
+Three key rules to remember:
+
+1. **Schemas** refer to a single namespace
+2. **All other components** (types, sources, directives) can have multiple namespaces
+3. The **`:base` namespace** is the fallback for all schemas
+
+## Creating Multiple Schemas
+
+### Define Schemas with Namespaces
+
+```ruby
+# app/graphql/admin_schema.rb
+module GraphQL
+  class AdminSchema < Rails::GraphQL::Schema
+    namespace :admin
+  end
+end
+
+# app/graphql/client_schema.rb
+module GraphQL
+  class ClientSchema < Rails::GraphQL::Schema
+    namespace :client
+  end
+end
+```
+
+### Configure Routes
+
+```ruby
+# config/routes.rb
+Rails.application.routes.draw do
+  mount GraphQL::AdminSchema, at: '/admin/graphql'
+  mount GraphQL::ClientSchema, at: '/graphql'
+end
+```
+
+## Setting Component Namespaces
+
+Namespaces can be set on any GraphQL component:
+
+### Force a Single Namespace
+
+Use `set_namespace` to replace inherited namespaces:
+
+```ruby
+module GraphQL
+  class AdminUserType < Rails::GraphQL::Type::Object
+    set_namespace :admin
+    
+    field :sensitive_data, :string
+  end
+end
+```
+
+### Add to Namespaces
+
+Use `namespace` to add to the list:
+
+```ruby
+module GraphQL
+  class UserType < Rails::GraphQL::Type::Object
+    namespace :admin, :client
+    
+    field :name, :string
+    field :email, :string
+  end
+end
+```
+
+### Check Current Namespaces
+
+```ruby
+UserType.namespaces  # => [:admin, :client]
+```
+
+## Module Association
+
+Automate namespace assignment by associating Ruby modules with namespaces:
+
+### Using Type Map
+
+```ruby
+# config/initializers/graphql.rb
+Rails.application.config.after_initialize do
+  GraphQL.type_map.associate(:admin, GraphQL::Admin)
+  GraphQL.type_map.associate(:client, GraphQL::Client)
+end
+```
+
+Now all types under `GraphQL::Admin` automatically get the `:admin` namespace:
+
+```ruby
+module GraphQL
+  module Admin
+    class UserType < Rails::GraphQL::Type::Object
+      # Automatically has namespace :admin
+      field :internal_notes, :string
+    end
+  end
+end
+```
+
+### Using Schema
+
+Schemas can also associate modules:
+
+```ruby
+module GraphQL
+  class AdminSchema < Rails::GraphQL::Schema
+    namespace :admin, GraphQL::Admin  # Associates module
+  end
+end
+```
+
+## Real-World Example
+
+Here's a complete example with admin and client schemas:
+
+### Shared Base Components
+
+```ruby
+# app/graphql/types/user_type.rb
+module GraphQL
+  class UserType < Rails::GraphQL::Type::Object
+    namespace :base  # Available to all schemas
+    
+    field :id, :id, null: false
+    field :name, :string, null: false
+    field :email, :string, null: false
+  end
+end
+
+# app/graphql/sources/user_source.rb
+module GraphQL
+  class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+    namespace :base
+    assigned_to User
+  end
+end
+```
+
+### Admin-Only Components
+
+```ruby
+# app/graphql/admin/admin_schema.rb
+module GraphQL
+  module Admin
+    class AdminSchema < Rails::GraphQL::Schema
+      namespace :admin, GraphQL::Admin
+    end
+  end
+end
+
+# app/graphql/admin/types/admin_user_type.rb
+module GraphQL
+  module Admin
+    class AdminUserType < UserType
+      # Inherits :base namespace, but module association adds :admin
+      
+      field :internal_notes, :string
+      field :last_login_ip, :string
+      field :failed_login_attempts, :int
+    end
+  end
+end
+
+# app/graphql/admin/mutations/ban_user_mutation.rb
+module GraphQL
+  module Admin
+    class BanUserMutation < Rails::GraphQL::Type::Object
+      # Automatically has :admin namespace
+      
+      field :ban_user, :boolean, null: false do
+        argument :user_id, :id, null: false
+        argument :reason, :string, null: false
+      end
+      
+      def ban_user(user_id:, reason:)
+        user = User.find(user_id)
+        user.update!(banned: true, ban_reason: reason)
+        true
+      end
+    end
+  end
+end
+```
+
+### Client-Only Components
+
+```ruby
+# app/graphql/client/client_schema.rb
+module GraphQL
+  module Client
+    class ClientSchema < Rails::GraphQL::Schema
+      namespace :client, GraphQL::Client
+    end
+  end
+end
+
+# app/graphql/client/types/public_user_type.rb
+module GraphQL
+  module Client
+    class PublicUserType < UserType
+      # Only exposes safe fields for public API
+      field :avatar_url, :string
+      field :bio, :string
+    end
+  end
+end
+
+# app/graphql/client/queries/me_query.rb
+module GraphQL
+  module Client
+    class MeQuery < Rails::GraphQL::Type::Object
+      field :me, PublicUserType do
+        authorize! { context[:current_user].present? }
+      end
+      
+      def me
+        context[:current_user]
+      end
+    end
+  end
+end
+```
+
+## Namespace Inheritance
+
+Namespaces are inherited by default:
+
+```ruby
+module GraphQL
+  class BaseType < Rails::GraphQL::Type::Object
+    namespace :admin, :client
+  end
+  
+  class UserType < BaseType
+    # Inherits [:admin, :client] namespaces
+  end
+  
+  class PrivateType < BaseType
+    set_namespace :admin  # Replaces inherited namespaces
+    # Now only has [:admin]
+  end
+end
+```
+
+## Sources and Namespaces
+
+Sources automatically attach to schemas in their namespaces:
+
+```ruby
+module GraphQL
+  class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+    namespace :admin, :client
+    # Fields available in both AdminSchema and ClientSchema
+  end
+  
+  class AuditLogSource < Rails::GraphQL::Source::ActiveRecordSource
+    set_namespace :admin
+    # Fields only in AdminSchema
+  end
+end
+```
+
+## Directives and Namespaces
+
+Directives can also use namespaces:
+
+```ruby
+module GraphQL
+  class AdminOnlyDirective < Rails::GraphQL::Directive
+    namespace :admin
+    placed_on :field_definition
+    
+    on(:authorize) do |event|
+      unless event.request.context[:admin]
+        raise GraphQL::ExecutionError, 'Admin access required'
+      end
+    end
+  end
+end
+```
+
+## The :base Namespace
+
+The `:base` namespace is special:
+
+- Acts as a fallback for all schemas
+- Types without explicit namespaces default to `:base`
+- Shared components should use `:base`
+
+```ruby
+module GraphQL
+  # Implicitly has :base namespace
+  class SharedType < Rails::GraphQL::Type::Object
+    field :id, :id, null: false
+  end
+  
+  # Explicitly set to :base
+  class CommonType < Rails::GraphQL::Type::Object
+    namespace :base
+    field :created_at, :date_time
+  end
+end
+```
+
+## Checking Component Availability
+
+Query which schemas have access to a component:
+
+```ruby
+# Get component's namespaces
+UserType.namespaces  # => [:admin, :client]
+
+# Find schemas with a namespace
+Rails::GraphQL::Schema.find(:admin)  # => AdminSchema
+
+# Check if type exists in namespace
+GraphQL.type_map.fetch('User', namespaces: :admin)  # => UserType or nil
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Module Organization">
+    Organize code by namespace using modules:
+    ```ruby
+    GraphQL::Admin::*
+    GraphQL::Client::*
+    GraphQL::Shared::*
+    ```
+  </Accordion>
+  
+  <Accordion title="Share Common Types">
+    Put shared types in the `:base` namespace:
+    ```ruby
+    class UserType < Rails::GraphQL::Type::Object
+      namespace :base
+    end
+    ```
+  </Accordion>
+  
+  <Accordion title="Explicit Over Implicit">
+    Be explicit about namespaces for clarity:
+    ```ruby
+    set_namespace :admin  # Clear intent
+    ```
+  </Accordion>
+  
+  <Accordion title="Use Module Association">
+    Leverage module association to reduce boilerplate:
+    ```ruby
+    GraphQL.type_map.associate(:admin, GraphQL::Admin)
+    ```
+  </Accordion>
+  
+  <Accordion title="Document Namespace Strategy">
+    Document your namespace strategy in a README:
+    - Which namespaces exist
+    - What each namespace represents
+    - How to add components to namespaces
+  </Accordion>
+</AccordionGroup>
+
+## Testing with Namespaces
+
+```ruby
+RSpec.describe 'Admin Schema' do
+  let(:schema) { GraphQL::AdminSchema }
+  
+  it 'includes admin-only types' do
+    expect(schema.types).to include('AdminUser')
+  end
+  
+  it 'excludes client-only types' do
+    expect(schema.types).not_to include('PublicProfile')
+  end
+  
+  it 'includes shared types' do
+    expect(schema.types).to include('User')
+  end
+end
+
+RSpec.describe GraphQL::UserType do
+  it 'belongs to correct namespaces' do
+    expect(described_class.namespaces).to include(:admin, :client)
+  end
+end
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Type Not Found in Schema">
+    **Problem:** Type exists but isn't available in schema.
+    
+    **Solution:** Check namespace configuration:
+    ```ruby
+    MyType.namespaces  # Check component namespaces
+    MySchema.namespace  # Check schema namespace
+    ```
+    
+    Ensure they match or component uses `:base`.
+  </Accordion>
+  
+  <Accordion title="Namespace Override Issues">
+    **Problem:** `set_namespace` not working as expected.
+    
+    **Solution:** `set_namespace` replaces all namespaces. Use `namespace` to add:
+    ```ruby
+    namespace :admin  # Adds to existing
+    set_namespace :admin  # Replaces all
+    ```
+  </Accordion>
+  
+  <Accordion title="Module Association Not Working">
+    **Problem:** Module association not applying.
+    
+    **Solution:** Ensure association happens before type loading:
+    ```ruby
+    # config/initializers/graphql.rb
+    Rails.application.config.after_initialize do
+      GraphQL.type_map.associate(:admin, GraphQL::Admin)
+    end
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Migration Strategies
+
+### Adding a New Namespace
+
+1. Create new schema with namespace
+2. Associate module
+3. Move/create types under module
+4. Update routes
+5. Test both schemas
+
+### Merging Namespaces
+
+1. Update components to use both namespaces temporarily
+2. Deprecate old schema
+3. Migrate clients
+4. Remove old namespace
+
+### Splitting a Namespace
+
+1. Create new namespace
+2. Copy shared types to `:base`
+3. Move specific types to new namespace
+4. Update module associations
+5. Test thoroughly
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Sources" icon="database" href="/guides/custom-sources">
+    Build sources that work with namespaces
+  </Card>
+  <Card title="Schema Configuration" icon="gear" href="/guides/schemas">
+    Learn more about schema configuration
+  </Card>
+</CardGroup>

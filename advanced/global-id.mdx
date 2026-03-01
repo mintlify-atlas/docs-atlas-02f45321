@@ -1,0 +1,348 @@
+---
+title: Global ID
+description: GraphQL-specific GlobalID implementation for component serialization and identification
+---
+
+## Overview
+
+Rails GraphQL implements its own version of Rails GlobalID, uniquely identifying GraphQL components within your application. This feature is essential for request caching, compilation, and ActiveJob serialization.
+
+<Info>
+Global IDs use a custom `gql://` URI scheme specifically designed for GraphQL components.
+</Info>
+
+## URI Format
+
+Global IDs follow this structure:
+
+```
+gql://namespace/class_name/scope?/name?params?
+```
+
+### Examples
+
+<CodeGroup>
+```ruby Types
+"gql://base/Type/String"
+"gql://base/Type/User"
+"gql://admin/Type/CustomScalar"
+```
+
+```ruby Schema Fields
+"gql://base/Schema/query/welcome"
+"gql://base/Schema/mutation/createUser"
+"gql://base/Schema/subscription/messageAdded"
+```
+
+```ruby Directives
+"gql://base/Directive/deprecated"
+"gql://base/Directive/deprecated?reason=Just+because"
+"gql://base/Directive/include"
+```
+</CodeGroup>
+
+## URI Components
+
+<ResponseField name="schema" type="string" required>
+  Always `gql` for GraphQL components
+</ResponseField>
+
+<ResponseField name="namespace" type="string" required>
+  Primary namespace in dash-case format (e.g., `base`, `admin-api`)
+</ResponseField>
+
+<ResponseField name="class_name" type="string" required>
+  Top-level class: `Type`, `Directive`, or `Schema`
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  For schema fields only: `query`, `mutation`, or `subscription`
+</ResponseField>
+
+<ResponseField name="name" type="string" required>
+  Symbolized name of the object
+</ResponseField>
+
+<ResponseField name="params" type="string">
+  URI-encoded parameters (rarely used)
+</ResponseField>
+
+## Creating Global IDs
+
+### From Objects
+
+```ruby
+# From lib/rails/graphql/global_id.rb
+class << self
+  # Create a new GraphQL Global identifier
+  def create(object, options = nil)
+    scope = options&.delete(:scope) || scope_of(object)
+    new(URI::GQL.create(object, scope, options), options)
+  end
+  
+  # Find the scope on which the object is applied to
+  def scope_of(object)
+    object.try(:schema_type) if object.gid_base_class.is_a?(Helpers::WithSchemaFields)
+  end
+end
+```
+
+<CodeGroup>
+```ruby Using to_gid
+GraphQL::AppSchema[:query][:welcome].to_gid.to_s
+# => "gql://base/Schema/query/welcome"
+
+GraphQL::Type::Scalar::StringScalar.to_gid.to_s
+# => "gql://base/Type/String"
+```
+
+```ruby Using to_global_id
+field = GraphQL::AppSchema[:mutation][:createUser]
+field.to_global_id.to_s
+# => "gql://base/Schema/mutation/createUser"
+```
+
+```ruby With Options
+GraphQL::GlobalID.create(
+  some_directive,
+  scope: :custom,
+  params: { key: 'value' }
+)
+```
+</CodeGroup>
+
+## Finding Components
+
+### By Global ID String
+
+```ruby
+# From lib/rails/graphql/global_id.rb
+def find(options = {})
+  base_class.try(:find_by_gid, self)
+end
+
+def base_class
+  if %w[Schema Directive Type].include?(class_name)
+    GraphQL.const_get(class_name, false)
+  else
+    GraphQL.type_map.fetch(class_name, namespace: namespace)
+  end
+end
+```
+
+<CodeGroup>
+```ruby Find Type
+GraphQL::GlobalID.find("gql://base/Type/String")
+# => Rails::GraphQL::Type::Scalar::StringScalar
+```
+
+```ruby Find Schema Field
+GraphQL::GlobalID.find("gql://base/Schema/query/welcome")
+# => #<Rails::GraphQL::Field::OutputField welcome: String!>
+```
+
+```ruby Find Directive
+GraphQL::GlobalID.find("gql://base/Directive/deprecated")
+# => Rails::GraphQL::Directive::DeprecatedDirective
+```
+</CodeGroup>
+
+### Interactive Example
+
+```ruby
+GraphQL::AppSchema[:query][:welcome].to_gid.to_s
+# => "gql://base/Schema/query/welcome"
+
+GraphQL::GlobalID.find("gql://base/Schema/query/welcome")
+# => #<Rails::GraphQL::Field::OutputField
+#    GraphQL::AppSchema[:query]
+#    welcome: String!>
+```
+
+## ActiveJob Serialization
+
+Global IDs integrate with ActiveJob for passing GraphQL objects to background jobs:
+
+```ruby
+# From lib/rails/graphql/global_id.rb
+class Serializer
+  include Singleton
+  
+  # Determines if an argument should be serialized
+  def serialize?(argument)
+    argument.is_a?(Helpers::WithGlobalID) || argument.class.is_a?(Helpers::WithGlobalID)
+  end
+  
+  # Serializes to JSON primitive
+  def serialize(argument)
+    { GlobalID::SERIALIZER_KEY => argument.to_global_id.to_s }
+  end
+  
+  # Deserializes from JSON
+  def deserialize(argument)
+    GlobalID.find argument[GlobalID::SERIALIZER_KEY]
+  end
+end
+```
+
+<CodeGroup>
+```ruby Serialize
+class ProcessFieldJob < ApplicationJob
+  def perform(field)
+    # field is automatically deserialized from GID
+    puts field.gql_name
+  end
+end
+
+# Automatically serializes to GID
+field = GraphQL::AppSchema[:query][:welcome]
+ProcessFieldJob.perform_later(field)
+```
+
+```ruby Manual Serialization
+serializer = Rails::GraphQL::GlobalID::Serializer.instance
+
+field = GraphQL::AppSchema[:query][:welcome]
+serialized = serializer.serialize(field)
+# => { "_gql_globalid" => "gql://base/Schema/query/welcome" }
+
+deserialized = serializer.deserialize(serialized)
+# => #<Rails::GraphQL::Field::OutputField welcome: String!>
+```
+</CodeGroup>
+
+## Usage in Caching
+
+Global IDs are used extensively for request caching:
+
+```ruby
+# Cache key includes GID
+cache_key = [
+  field.to_gid.to_s,
+  arguments.hash,
+  context_hash
+].join('/')
+
+Rails.cache.fetch(cache_key) do
+  # Expensive operation
+end
+```
+
+<Info>
+Global IDs provide stable, unique identifiers that work across processes and servers.
+</Info>
+
+## Helpers Module
+
+Components include the `WithGlobalID` helper:
+
+```ruby
+module Helpers::WithGlobalID
+  def to_global_id(options = {})
+    GlobalID.create(self, options)
+  end
+  
+  alias to_gid to_global_id
+  
+  def gid_base_class
+    self.class
+  end
+end
+```
+
+<Tip>
+Any class including `Helpers::WithGlobalID` can be serialized to ActiveJob.
+</Tip>
+
+## URI Parsing
+
+```ruby
+def initialize(gid, options = {})
+  @uri = gid.is_a?(URI::GQL) ? gid : URI::GQL.parse(gid)
+end
+
+delegate :namespace, :class_name, :scope, :name, :instantiate?, to: :uri
+```
+
+<CodeGroup>
+```ruby Parse Components
+gid = GraphQL::GlobalID.new("gql://admin/Schema/query/users")
+
+gid.namespace
+# => "admin"
+
+gid.class_name
+# => "Schema"
+
+gid.scope
+# => "query"
+
+gid.name
+# => "users"
+```
+
+```ruby Equality
+gid1 = GraphQL::GlobalID.new("gql://base/Type/String")
+gid2 = GraphQL::GlobalID.new("gql://base/Type/String")
+
+gid1 == gid2
+# => true
+
+gid1.eql?(gid2)
+# => true
+```
+</CodeGroup>
+
+## Best Practices
+
+<Card title="Use for Stable References" icon="link">
+  Global IDs provide stable references across processes:
+
+  ```ruby
+  # Store in cache or database
+  cached_field_gid = field.to_gid.to_s
+  
+  # Retrieve later
+  field = GraphQL::GlobalID.find(cached_field_gid)
+  ```
+</Card>
+
+<Card title="Background Jobs" icon="clock">
+  Pass GraphQL components to jobs safely:
+
+  ```ruby
+  ProcessSchemaJob.perform_later(GraphQL::AppSchema)
+  # Automatically serializes/deserializes via GID
+  ```
+</Card>
+
+<Card title="Version Awareness" icon="code-branch">
+  Remember that Global IDs don't include version information:
+
+  ```ruby
+  # If schema changes, cached GIDs may become invalid
+  # Use Type Map version for cache invalidation
+  cache_key = [field.to_gid.to_s, GraphQL.type_map.version].join('/')
+  ```
+</Card>
+
+## Limitations
+
+<Warning>
+**Future Implementation**: The current Global ID implementation is the beginning of a larger system. Future versions will support:
+- Signed Global IDs for security
+- More component types
+- Versioned Global IDs
+- Cross-application Global IDs
+</Warning>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Type Map" icon="map" href="/advanced/type-map">
+    How Global IDs resolve components
+  </Card>
+  <Card title="Request Caching" icon="bolt" href="/core/request">
+    Using Global IDs for caching
+  </Card>
+</CardGroup>

@@ -1,0 +1,465 @@
+---
+title: Directives
+description: Built-in and custom GraphQL directives for extending schema and execution behavior
+---
+
+Directives are the GraphQL spec's recommended way to extend behaviors. They're fully event-driven and can affect both schema definitions and query execution.
+
+```graphql
+@deprecated(reason: "Use newField instead")
+```
+
+## Creating Custom Directives
+
+Create directives by extending the `GraphQL::Directive` class:
+
+```ruby app/graphql/directives/awesome_directive.rb
+module GraphQL
+  class AwesomeDirective < GraphQL::Directive
+    desc 'Makes things awesome'
+    
+    # Where can this directive be placed?
+    placed_on :object, :field_definition
+    
+    # Can it be repeated?
+    self.repeatable = false
+    
+    # Add arguments
+    argument :level, :int, default: 1
+    
+    # Listen to events
+    on(:attach) do |source, level:|
+      puts "Added to #{source.name} with level #{level}"
+    end
+  end
+end
+```
+
+## Directive Locations
+
+Directives must specify where they can be used with `placed_on`:
+
+### Definition Locations
+
+For schema definition:
+
+- `:schema` - On schema definitions
+- `:scalar` - On scalar types
+- `:object` - On object types
+- `:field_definition` - On field definitions
+- `:argument_definition` - On argument definitions
+- `:interface` - On interface types
+- `:union` - On union types
+- `:enum` - On enum types
+- `:enum_value` - On enum values
+- `:input_object` - On input types
+- `:input_field_definition` - On input field definitions
+
+### Execution Locations
+
+For query execution:
+
+- `:query` - On query operations
+- `:mutation` - On mutation operations
+- `:subscription` - On subscription operations
+- `:field` - On field selections
+- `:fragment_definition` - On fragment definitions
+- `:fragment_spread` - On fragment spreads
+- `:inline_fragment` - On inline fragments
+
+```ruby
+# Definition directive
+placed_on :field_definition, :argument_definition
+
+# Execution directive
+placed_on :field, :fragment_spread, :inline_fragment
+
+# Both
+placed_on :object, :field, :field_definition
+```
+
+## Using Directives
+
+### On Definitions
+
+Add directives to schema elements:
+
+<Tabs>
+  <Tab title="Symbol Reference">
+    ```ruby
+    use :awesome, level: 2
+    ```
+  </Tab>
+  
+  <Tab title="Class Reference">
+    ```ruby
+    use GraphQL::AwesomeDirective(level: 2)
+    use GraphQL::AwesomeDirective.new(level: 2)
+    ```
+  </Tab>
+  
+  <Tab title="Instance">
+    ```ruby
+    use GraphQL::AwesomeDirective.new(level: 2)
+    ```
+  </Tab>
+</Tabs>
+
+```ruby app/graphql/objects/user.rb
+module GraphQL
+  class User < GraphQL::Object
+    # On the type
+    use :awesome, level: 3
+    
+    # On a field
+    field :name, :string do
+      use :deprecated, reason: 'Use fullName instead'
+    end
+  end
+end
+```
+
+### On Execution
+
+Use directives in GraphQL queries:
+
+```graphql
+query($includeEmail: Boolean!) {
+  user(id: 1) {
+    id
+    name
+    email @include(if: $includeEmail)
+    phone @skip(if: $includeEmail)
+  }
+}
+```
+
+## Built-in Directives
+
+### @deprecated
+
+Mark fields or enum values as deprecated:
+
+**Locations:** `:field_definition`, `:enum_value`
+
+**Repeatable:** `false`
+
+**Arguments:**
+- `reason: String` - Explanation of why it's deprecated
+
+```ruby
+# On fields
+field :username, :string do
+  use :deprecated, reason: 'Use email instead'
+end
+
+# Shortcut
+field :username, :string, deprecated: 'Use email instead'
+
+# On enum values
+enum 'Status' do
+  add 'ACTIVE'
+  add 'INACTIVE', deprecated: 'Use DISABLED instead'
+end
+```
+
+When querying deprecated fields:
+
+```json
+{
+  "data": { "username": "john.doe" },
+  "errors": [{
+    "message": "The username field is deprecated, reason: Use email instead."
+  }]
+}
+```
+
+### @include
+
+Conditionally include fields:
+
+**Locations:** `:field`, `:fragment_spread`, `:inline_fragment`
+
+**Repeatable:** `false`
+
+**Arguments:**
+- `if: Boolean!` - Include when true
+
+```graphql
+query($includeEmail: Boolean!) {
+  user {
+    id
+    name
+    email @include(if: $includeEmail)
+  }
+}
+```
+
+When `if` is `true`:
+```json
+{ "data": { "user": { "id": 1, "name": "John", "email": "john@example.com" } } }
+```
+
+When `if` is `false`:
+```json
+{ "data": { "user": { "id": 1, "name": "John" } } }
+```
+
+### @skip
+
+Conditionally exclude fields:
+
+**Locations:** `:field`, `:fragment_spread`, `:inline_fragment`
+
+**Repeatable:** `false`
+
+**Arguments:**
+- `if: Boolean!` - Skip when true
+
+```graphql
+query($isPublic: Boolean!) {
+  user {
+    id
+    name
+    email @skip(if: $isPublic)
+  }
+}
+```
+
+When `if` is `true`:
+```json
+{ "data": { "user": { "id": 1, "name": "John" } } }
+```
+
+When `if` is `false`:
+```json
+{ "data": { "user": { "id": 1, "name": "John", "email": "john@example.com" } } }
+```
+
+### @specifiedBy
+
+Document scalar specifications:
+
+**Locations:** `:scalar`
+
+**Repeatable:** `false`
+
+**Arguments:**
+- `url: String!` - URL to specification document
+
+```ruby app/graphql/scalars/date_time_scalar.rb
+module GraphQL
+  class DateTimeScalar < GraphQL::Scalar
+    use :specified_by, url: 'https://www.rfc-editor.org/rfc/rfc3339'
+  end
+end
+```
+
+This directive has no runtime effect but appears in introspection.
+
+## Directive Arguments
+
+Define arguments for your directives:
+
+```ruby app/graphql/directives/rate_limit_directive.rb
+module GraphQL
+  class RateLimitDirective < GraphQL::Directive
+    desc 'Limit request rate'
+    
+    placed_on :field_definition
+    
+    argument :limit, :int, null: false, desc: 'Max requests'
+    argument :duration, :int, null: false, desc: 'Time window in seconds'
+    
+    on(:prepare) do |event, limit:, duration:|
+      # Check rate limit
+      key = "rate_limit:#{event.field.name}:#{event.request.context.current_user.id}"
+      count = Rails.cache.increment(key, 1, expires_in: duration.seconds)
+      
+      raise GraphQL::RateLimitError if count > limit
+    end
+  end
+end
+```
+
+Use with arguments:
+
+```ruby
+field :expensive_query, 'Data' do
+  use :rate_limit, limit: 10, duration: 60
+end
+```
+
+## Directive Events
+
+Directives are event-driven. Listen to events:
+
+```ruby
+module GraphQL
+  class LogDirective < GraphQL::Directive
+    placed_on :field
+    
+    # When the directive is attached
+    on(:attach) do |source|
+      puts "Attached to #{source.name}"
+    end
+    
+    # Before field resolution
+    on(:prepare) do |event|
+      puts "Preparing #{event.field.name}"
+    end
+    
+    # After field resolution
+    on(:finalize) do |event|
+      puts "Resolved #{event.field.name}: #{event.value}"
+    end
+  end
+end
+```
+
+### Event Filters
+
+Filter when events trigger:
+
+```ruby
+module GraphQL
+  class ConditionalDirective < GraphQL::Directive
+    placed_on :field_definition
+    
+    # Only for specific types
+    on(:prepare, for: :user) do |event|
+      # Only triggers for User type
+    end
+    
+    # Only for specific fields
+    on(:finalize, on: %i[name email]) do |event|
+      # Only triggers for name and email fields
+    end
+    
+    # Only during specific phases
+    on(:validate, during: :resolve) do |event|
+      # Only during resolve phase
+    end
+  end
+end
+```
+
+## Repeatability
+
+By default, directives can only appear once per location:
+
+```ruby
+module GraphQL
+  class TagDirective < GraphQL::Directive
+    placed_on :field_definition
+    
+    # Allow multiple instances
+    self.repeatable = true
+    
+    argument :name, :string, null: false
+  end
+end
+```
+
+Now you can use it multiple times:
+
+```ruby
+field :post, 'Post' do
+  use :tag, name: 'public'
+  use :tag, name: 'featured'
+  use :tag, name: 'premium'
+end
+```
+
+## Directive Examples
+
+### Authentication Directive
+
+```ruby app/graphql/directives/auth_directive.rb
+module GraphQL
+  class AuthDirective < GraphQL::Directive
+    desc 'Require authentication'
+    
+    placed_on :field_definition, :object
+    
+    argument :role, 'Role'
+    
+    on(:prepare) do |event, role: nil|
+      user = event.request.context.current_user
+      
+      raise GraphQL::UnauthorizedError unless user
+      raise GraphQL::ForbiddenError if role && user.role != role
+    end
+  end
+end
+```
+
+### Caching Directive
+
+```ruby app/graphql/directives/cached_directive.rb
+module GraphQL
+  class CachedDirective < GraphQL::Directive
+    desc 'Cache field results'
+    
+    placed_on :field_definition
+    
+    argument :ttl, :int, default: 3600
+    
+    on(:prepare) do |event, ttl:|
+      cache_key = "graphql:#{event.field.name}:#{event.args}"
+      
+      if cached = Rails.cache.read(cache_key)
+        event.halt(cached)
+      end
+    end
+    
+    on(:finalize) do |event, ttl:|
+      cache_key = "graphql:#{event.field.name}:#{event.args}"
+      Rails.cache.write(cache_key, event.value, expires_in: ttl)
+    end
+  end
+end
+```
+
+### Transform Directive
+
+```ruby app/graphql/directives/uppercase_directive.rb
+module GraphQL
+  class UppercaseDirective < GraphQL::Directive
+    desc 'Transform string to uppercase'
+    
+    placed_on :field_definition
+    
+    on(:finalize, for: :string) do |event|
+      event.value = event.value.upcase if event.value.is_a?(String)
+    end
+  end
+end
+```
+
+## Loading Directives
+
+Load directive dependencies in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Load custom directives
+    load_directives :auth, :cached, :rate_limit
+    
+    # Or load all from a directory
+    load_directory 'directives'
+  end
+end
+```
+
+## Best Practices
+
+1. **Use symbol references** - Reference directives by symbol, not class
+2. **Document purpose** - Add descriptions with `desc`
+3. **Specify locations** - Only allow directives where they make sense
+4. **Handle errors** - Raise appropriate errors in event handlers
+5. **Use event filters** - Target specific types or phases
+6. **Make repeatable** - When multiple instances make sense
+7. **Keep focused** - One directive should do one thing
+8. **Test thoroughly** - Directives affect many parts of your schema

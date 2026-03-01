@@ -1,0 +1,459 @@
+---
+title: Queries
+description: Define and execute GraphQL queries to fetch data from your API
+---
+
+Queries are GraphQL operations that fetch data from your server. They're read-only operations handled by the request processor.
+
+```graphql
+query {
+  user(id: 1) {
+    id
+    name
+    email
+  }
+}
+```
+
+## Query Structure
+
+A query consists of five elements:
+
+- **type** - `query` (optional for single-query documents)
+- **name** - Optional query name
+- **variables** - Optional variable definitions
+- **directives** - Optional directives like `@include`, `@skip`
+- **selection** - One or more fields from schema query fields
+
+```graphql
+query GetUser($id: ID!) {
+  user(id: $id) {
+    id
+    name
+  }
+}
+```
+
+## Three Ways to Define Queries
+
+### 1. Inline Schema Definition
+
+Define query fields directly in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    query_fields do
+      field :user, 'User', null: false do
+        argument :id, :id, null: false
+      end
+      
+      field :users, 'User', array: true
+      
+      field :me, 'User', null: false
+    end
+  end
+end
+```
+
+Implement resolver methods in the schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    query_fields do
+      field(:user, 'User') { argument :id, :id, null: false }
+    end
+    
+    def self.user(id:)
+      User.find(id)
+    end
+  end
+end
+```
+
+### 2. Standalone Query Classes
+
+Define queries as separate classes for better organization:
+
+```ruby app/graphql/queries/user_query.rb
+module GraphQL
+  module Queries
+    class UserQuery < GraphQL::Query
+      desc 'Find a user by ID'
+      
+      argument :id, :id, null: false
+      
+      def resolve(id:)
+        User.find(id)
+      end
+    end
+  end
+end
+```
+
+Import into your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    import_into :query, Queries::UserQuery
+    
+    # Or import all queries from a module
+    import_all Queries, recursive: true
+  end
+end
+```
+
+<Info>
+  Standalone queries automatically use the class name as the field name. `UserQuery` becomes `user` in the schema.
+</Info>
+
+### 3. Source-Based Queries
+
+Generate queries automatically from sources:
+
+```ruby app/graphql/sources/user_source.rb
+module GraphQL
+  class UserSource < GraphQL::Source::ActiveRecordSource
+    self.assigned_to = 'User'
+    
+    # Automatically provides:
+    # - user(id: ID!): User
+    # - users(limit: Int, offset: Int): [User!]!
+  end
+end
+```
+
+Sources automatically create common query patterns based on your models.
+
+<Note>
+  Sources are the recommended approach for standard CRUD operations. Use standalone queries for custom business logic.
+</Note>
+
+## Query Arguments
+
+Queries can accept arguments to filter or customize results:
+
+<Tabs>
+  <Tab title="Simple Arguments">
+    ```ruby
+    query_fields do
+      field(:user, 'User') do
+        argument :id, :id, null: false
+      end
+      
+      field(:users, 'User', array: true) do
+        argument :limit, :int, default: 10
+        argument :offset, :int, default: 0
+      end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Input Type Arguments">
+    ```ruby
+    # Define an input type
+    input 'UserFilter' do
+      field :name, :string
+      field :email, :string
+      field :role, 'Role'
+    end
+    
+    query_fields do
+      field(:users, 'User', array: true) do
+        argument :filter, 'UserFilter'
+        argument :limit, :int, default: 10
+      end
+    end
+    
+    def users(filter: nil, limit: 10)
+      scope = User.all
+      scope = scope.where(name: filter.name) if filter&.name
+      scope.limit(limit)
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Helper Arguments">
+    ```ruby
+    query_fields do
+      # id_argument is a shortcut for argument(:id, :id, null: false)
+      field :user, 'User', arguments: id_argument
+      
+      # Customize the id argument
+      field :post, 'Post', arguments: id_argument(:post_id)
+    end
+    ```
+  </Tab>
+</Tabs>
+
+## Query Resolution
+
+Queries are resolved by calling methods on the schema or source:
+
+```ruby app/graphql/queries/user_query.rb
+module GraphQL
+  module Queries
+    class UserQuery < GraphQL::Query
+      argument :id, :id, null: false
+      
+      # Standalone queries use the resolve method
+      def resolve(id:)
+        User.find(id)
+      end
+    end
+  end
+end
+```
+
+For inline definitions:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    query_fields do
+      field(:user, 'User') { argument :id, :id, null: false }
+    end
+    
+    # Method name matches field name
+    def self.user(id:)
+      User.find(id)
+    end
+  end
+end
+```
+
+### Resolver Context
+
+Resolver methods have access to:
+
+```ruby
+def resolve(id:)
+  object    # The source object (usually the schema for queries)
+  request   # The current GraphQL request
+  context   # Request context with current_user, etc.
+  
+  # Example: Access current user
+  return unless context.current_user
+  User.find(id)
+end
+```
+
+## Query Examples
+
+### Simple Query
+
+```graphql
+query {
+  user(id: 1) {
+    id
+    name
+    email
+  }
+}
+```
+
+### Query with Variables
+
+```graphql
+query GetUser($userId: ID!) {
+  user(id: $userId) {
+    id
+    name
+    posts {
+      id
+      title
+    }
+  }
+}
+```
+
+Variables passed separately:
+
+```json
+{
+  "userId": "1"
+}
+```
+
+### Multiple Fields
+
+```graphql
+query {
+  me {
+    id
+    name
+  }
+  
+  users(limit: 5) {
+    id
+    name
+  }
+  
+  post(id: 10) {
+    id
+    title
+  }
+}
+```
+
+### Nested Fields
+
+```graphql
+query {
+  user(id: 1) {
+    id
+    name
+    posts {
+      id
+      title
+      comments {
+        id
+        body
+        author {
+          id
+          name
+        }
+      }
+    }
+  }
+}
+```
+
+## Query Field Types
+
+Query fields can return different types:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    query_fields do
+      # Return a single object
+      field :user, 'User', null: false
+      
+      # Return an array
+      field :users, 'User', array: true
+      
+      # Return a non-nullable array of non-nullable items
+      field :all_users, 'User', full: true
+      
+      # Return a scalar
+      field :user_count, :int, null: false
+      
+      # Return an interface
+      field :node, 'Node', null: false do
+        argument :id, :id, null: false
+      end
+      
+      # Return a union
+      field :search, 'SearchResult', array: true do
+        argument :query, :string, null: false
+      end
+    end
+  end
+end
+```
+
+## Entry Points
+
+The top-level fields in query selections are called entry points:
+
+```graphql
+{
+  allUsers {      # Entry point: GraphQL::AppSchema[:query][:all_users]
+    id
+    name
+  }
+  me {            # Entry point: GraphQL::AppSchema[:query][:me]
+    id
+  }
+}
+```
+
+Entry points must exist in the schema's `query_fields`.
+
+## Special Fields
+
+### __typename
+
+Request the type name at any level:
+
+```graphql
+query {
+  __typename      # "_Query"
+  user(id: 1) {
+    __typename    # "User"
+    id
+    name
+  }
+}
+```
+
+### __schema and __type
+
+Introspection queries:
+
+```graphql
+query {
+  __schema {
+    types {
+      name
+    }
+  }
+  
+  __type(name: "User") {
+    name
+    fields {
+      name
+      type {
+        name
+      }
+    }
+  }
+}
+```
+
+## Query Complexity
+
+Queries can be simple or complex:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    query_fields do
+      field(:expensive_data, 'Data') do
+        # Add custom authorization or rate limiting
+        authorize :admin
+      end
+    end
+  end
+end
+```
+
+## Shorthand Syntax
+
+For single queries without variables or directives:
+
+```graphql
+# Full syntax
+query {
+  user(id: 1) { name }
+}
+
+# Shorthand (type omitted)
+{
+  user(id: 1) { name }
+}
+```
+
+## Best Practices
+
+1. **Name your queries** - Use descriptive operation names
+2. **Use variables** - Don't concatenate strings into queries
+3. **Request only needed fields** - Don't over-fetch data
+4. **Use fragments** - Reuse field selections
+5. **Organize by domain** - Group related queries in modules
+6. **Add descriptions** - Document query purpose and arguments
+7. **Use sources** - Let sources generate standard queries
+8. **Validate inputs** - Use Input types for complex filters

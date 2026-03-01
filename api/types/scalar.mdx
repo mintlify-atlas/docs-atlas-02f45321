@@ -1,0 +1,303 @@
+---
+title: "Scalar Type"
+description: "Define GraphQL scalar types for primitive leaf values"
+---
+
+## Overview
+
+Scalar types represent primitive leaf values in a GraphQL type system. They are the basic building blocks for all GraphQL values.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Specification:** [GraphQL Scalar Type Definition](http://spec.graphql.org/June2018/#ScalarTypeDefinition)
+
+## Overview
+
+Scalars work similarly to `ActiveModel::Type::Value` but operate in a singleton fashion rather than with instances. They handle serialization and deserialization of primitive values.
+
+## Built-in Scalars
+
+Rails GraphQL includes all standard GraphQL scalar types:
+
+<ParamField path="IntScalar" type="Scalar">
+  Represents signed 32-bit integers
+</ParamField>
+
+<ParamField path="FloatScalar" type="Scalar">
+  Represents signed double-precision floating-point values
+</ParamField>
+
+<ParamField path="StringScalar" type="Scalar">
+  Represents textual data as UTF-8 character sequences
+</ParamField>
+
+<ParamField path="BooleanScalar" type="Scalar">
+  Represents `true` or `false`
+</ParamField>
+
+<ParamField path="IdScalar" type="Scalar">
+  Represents unique identifiers, serialized as strings
+</ParamField>
+
+## Additional Scalars
+
+Rails GraphQL provides extended scalar types:
+
+<ParamField path="AnyScalar" type="Scalar">
+  Accepts any JSON-compatible value
+</ParamField>
+
+<ParamField path="BigintScalar" type="Scalar">
+  Represents large integers beyond the 32-bit range
+</ParamField>
+
+<ParamField path="BinaryScalar" type="Scalar">
+  Represents binary data
+</ParamField>
+
+<ParamField path="DateScalar" type="Scalar">
+  Represents date values (without time)
+</ParamField>
+
+<ParamField path="DateTimeScalar" type="Scalar">
+  Represents date and time values
+</ParamField>
+
+<ParamField path="DecimalScalar" type="Scalar">
+  Represents arbitrary-precision decimal numbers
+</ParamField>
+
+<ParamField path="JsonScalar" type="Scalar">
+  Represents JSON data structures
+</ParamField>
+
+<ParamField path="TimeScalar" type="Scalar">
+  Represents time values (without date)
+</ParamField>
+
+## Class Methods
+
+### `valid_input?(value)`
+
+Check if a value is valid scalar input (before deserialization).
+
+<ParamField path="value" type="Any" required>
+  The value to validate
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value is valid for this scalar type
+</ResponseField>
+
+<Expandable title="Default Behavior">
+The base implementation accepts:
+- Valid GraphQL tokens
+- String values
+
+Custom scalars should override this method for specific validation logic.
+</Expandable>
+
+### `valid_output?(value)`
+
+Check if a value is valid scalar output (before serialization).
+
+<ParamField path="value" type="Any" required>
+  The value to validate
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value can be serialized by this scalar
+</ResponseField>
+
+<Expandable title="Default Behavior">
+The base implementation checks if the value responds to `to_s`.
+</Expandable>
+
+### `deserialize(value)`
+
+Turn user input into a Ruby object.
+
+<ParamField path="value" type="String | Token" required>
+  The input value to deserialize
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The deserialized Ruby value
+</ResponseField>
+
+```ruby
+IntScalar.deserialize("42") # => 42
+StringScalar.deserialize("hello") # => "hello"
+```
+
+### `as_json(value)`
+
+Transform a value to its representation in a Hash object.
+
+<ParamField path="value" type="Any" required>
+  The value to serialize
+</ParamField>
+
+<ResponseField name="return" type="String">
+  The value converted to a string
+</ResponseField>
+
+```ruby
+IntScalar.as_json(42) # => "42"
+BooleanScalar.as_json(true) # => "true"
+```
+
+### `to_json(value)`
+
+Transform a value to its representation in a JSON string.
+
+<ParamField path="value" type="Any" required>
+  The value to serialize
+</ParamField>
+
+<ResponseField name="return" type="String">
+  The value as a JSON-compatible quoted string
+</ResponseField>
+
+```ruby
+StringScalar.to_json("hello") # => '"hello"'
+IntScalar.to_json(42) # => '"42"'
+```
+
+## Creating Custom Scalars
+
+Define custom scalar types by inheriting from `Rails::GraphQL::Type::Scalar`:
+
+```ruby
+class EmailScalar < GraphQL::ScalarType
+  description "A valid email address"
+  
+  def self.valid_input?(value)
+    value.is_a?(String) && value.match?(URI::MailTo::EMAIL_REGEXP)
+  end
+  
+  def self.valid_output?(value)
+    value.is_a?(String) && value.match?(URI::MailTo::EMAIL_REGEXP)
+  end
+  
+  def self.deserialize(value)
+    return nil unless valid_input?(value)
+    value.downcase.strip
+  end
+  
+  def self.as_json(value)
+    value.to_s
+  end
+end
+```
+
+## Usage Examples
+
+### Basic Field with Scalar
+
+```ruby
+class UserType < GraphQL::ObjectType
+  field :id, :id, null: false
+  field :name, :string
+  field :age, :int
+  field :rating, :float
+  field :active, :boolean
+end
+```
+
+### Custom Scalar Field
+
+```ruby
+class UrlScalar < GraphQL::ScalarType
+  description "A valid URL"
+  
+  def self.valid_input?(value)
+    value.is_a?(String) && value.match?(/\A#{URI::DEFAULT_PARSER.make_regexp}\z/)
+  end
+  
+  def self.deserialize(value)
+    URI.parse(value)
+  end
+  
+  def self.as_json(value)
+    value.to_s
+  end
+end
+
+class ArticleType < GraphQL::ObjectType
+  field :url, UrlScalar
+end
+```
+
+### Extended Scalars
+
+```ruby
+class EventType < GraphQL::ObjectType
+  field :id, :id, null: false
+  field :name, :string
+  field :date, :date          # DateScalar
+  field :start_time, :time    # TimeScalar
+  field :created_at, :datetime # DateTimeScalar
+  field :metadata, :json      # JsonScalar
+  field :attendees, :bigint   # BigintScalar
+end
+```
+
+### With Input
+
+```ruby
+class CreateEventInput < GraphQL::InputType
+  field :name, :string, null: false
+  field :date, :date, null: false
+  field :metadata, :json
+end
+```
+
+## Implementation Details
+
+### ActiveRecord Type Integration
+
+Scalars can define an `ar_type` attribute to indicate which ActiveRecord type the value should be cast to when serializing to hash. This helps determine if a cast is necessary.
+
+### Token Handling
+
+Scalars automatically handle `GQLParser::Token` values during deserialization, converting them to appropriate Ruby types.
+
+### Setup
+
+Scalars are configured with:
+```ruby
+setup! leaf: true, input: true, output: true
+```
+
+This marks them as:
+- **Leaf types**: Terminal nodes in the GraphQL tree
+- **Input types**: Can be used in arguments
+- **Output types**: Can be used in fields
+
+## Validation
+
+Custom scalars should implement both input and output validation:
+
+```ruby
+class PositiveIntScalar < GraphQL::ScalarType
+  def self.valid_input?(value)
+    super && value.to_i > 0
+  end
+  
+  def self.valid_output?(value)
+    value.is_a?(Integer) && value > 0
+  end
+  
+  def self.deserialize(value)
+    val = value.to_i
+    val if val > 0
+  end
+end
+```
+
+## Related Types
+
+- [Enum](/api/types/enum) - Alternative leaf type with fixed values
+- [Input](/api/types/input) - Use scalars as input field types
+- [Object](/api/types/object) - Use scalars as object field types

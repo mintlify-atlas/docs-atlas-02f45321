@@ -1,0 +1,544 @@
+---
+title: Directive
+description: GraphQL Directive class for defining and using directives that modify behavior of schema elements
+---
+
+## Overview
+
+The `Rails::GraphQL::Directive` class provides a way to define directives that can modify the behavior of schema elements or execution. Directives work as event listeners and triggers.
+
+**Namespace:** `Rails::GraphQL`
+
+**Extends:**
+- `ActiveSupport::Autoload`
+- `Helpers::WithEvents`
+- `Helpers::WithCallbacks`
+- `Helpers::WithArguments`
+- `Helpers::WithGlobalID`
+- `Helpers::Registerable`
+
+---
+
+## Directive Locations
+
+Directives can be placed on various schema elements:
+
+<Expandable title="Execution Locations">
+
+<ResponseField name="EXECUTION_LOCATIONS" type="Set">
+  Locations where directives can be used in queries:
+  - `:query` - On query operations
+  - `:mutation` - On mutation operations
+  - `:subscription` - On subscription operations
+  - `:field` - On field selections
+  - `:fragment_definition` - On fragment definitions
+  - `:fragment_spread` - On fragment spreads
+  - `:inline_fragment` - On inline fragments
+</ResponseField>
+
+</Expandable>
+
+<Expandable title="Definition Locations">
+
+<ResponseField name="DEFINITION_LOCATIONS" type="Set">
+  Locations where directives can be used in schema definitions:
+  - `:schema` - On schema definition
+  - `:scalar` - On scalar types
+  - `:object` - On object types
+  - `:field_definition` - On field definitions
+  - `:argument_definition` - On argument definitions
+  - `:interface` - On interface types
+  - `:union` - On union types
+  - `:enum` - On enum types
+  - `:enum_value` - On enum values
+  - `:input_object` - On input object types
+  - `:input_field_definition` - On input field definitions
+</ResponseField>
+
+</Expandable>
+
+---
+
+## Class Attributes
+
+<ParamField path="repeatable" type="Boolean" default="false">
+  Whether the directive can be used multiple times on the same location
+</ParamField>
+
+```ruby
+class MyDirective < Rails::GraphQL::Directive
+  self.repeatable = true
+end
+```
+
+---
+
+## Class Methods
+
+### kind
+
+Return the kind of object, always `:directive`.
+
+**Returns:** `Symbol`
+
+```ruby
+Directive.kind # => :directive
+```
+
+---
+
+### base_type
+
+Return the base directive class.
+
+**Returns:** `Rails::GraphQL::Directive`
+
+```ruby
+MyDirective.base_type # => Rails::GraphQL::Directive
+```
+
+**Alias:** `gid_base_class`
+
+---
+
+### gql_name
+
+Get the GraphQL name of the directive (camelCase with lowercase first letter).
+
+**Returns:** `String`
+
+```ruby
+DeprecatedDirective.gql_name # => "deprecated"
+CachedDirective.gql_name # => "cached"
+```
+
+---
+
+### locations
+
+Get the set of valid locations for this directive.
+
+**Returns:** `Set<Symbol>`
+
+```ruby
+Directive.locations # => Set[:field, :fragment_definition, ...]
+```
+
+---
+
+### placed_on
+
+Add valid locations for the directive (merges with inherited locations).
+
+<ParamField path="list" type="Array<Symbol>" required>
+  Locations where the directive can be used
+</ParamField>
+
+```ruby
+class CachedDirective < Rails::GraphQL::Directive
+  placed_on :field, :field_definition
+end
+```
+
+---
+
+### placed_on!
+
+Override valid locations for the directive (replaces inherited locations).
+
+<ParamField path="list" type="Array<Symbol>" required>
+  Locations where the directive can be used
+</ParamField>
+
+```ruby
+class CustomDirective < Rails::GraphQL::Directive
+  placed_on! :field, :object
+end
+```
+
+---
+
+### build
+
+Build a directive instance with parsed arguments.
+
+<ParamField path="xargs" type="Hash" required>
+  Arguments as key-value pairs
+</ParamField>
+
+**Returns:** Directive instance
+
+```ruby
+directive = DeprecatedDirective.build(reason: 'Use newField instead')
+```
+
+---
+
+### find_by_gid
+
+Find and optionally instantiate a directive by its Global ID.
+
+<ParamField path="gid" type="GlobalID" required>
+  The Global ID object
+</ParamField>
+
+**Returns:** Directive class or instance
+
+```ruby
+directive = Directive.find_by_gid(gid)
+```
+
+---
+
+## Constructor
+
+### initialize
+
+<ParamField path="args" type="OpenStruct">
+  Positional arguments struct
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Named arguments as keyword arguments
+</ParamField>
+
+```ruby
+# Using keyword arguments
+directive = DeprecatedDirective.new(reason: 'Use newField instead')
+
+# Shortcut using callable class
+directive = DeprecatedDirective(reason: 'Use newField instead')
+```
+
+---
+
+## Instance Attributes
+
+<ResponseField name="args" type="OpenStruct">
+  Arguments provided to the directive instance (frozen)
+</ResponseField>
+
+<ResponseField name="event" type="Event">
+  Current event context (if within event callback)
+</ResponseField>
+
+---
+
+## Instance Methods
+
+### assign_owner!
+
+Assign the owner of the directive (can only be called once).
+
+<ParamField path="owner" type="Object" required>
+  The schema element that owns this directive
+</ParamField>
+
+**Raises:** `ArgumentError` if owner already assigned
+
+```ruby
+directive.assign_owner!(field)
+```
+
+---
+
+### args_as_json
+
+Convert all arguments to their JSON representation.
+
+**Returns:** `Hash`
+
+```ruby
+directive.args_as_json # => { "reason" => "Use newField instead" }
+```
+
+---
+
+### args_to_json
+
+Convert all arguments to their JSON string representation.
+
+**Returns:** `Hash`
+
+```ruby
+directive.args_to_json # => { "reason" => "\"Use newField instead\"" }
+```
+
+---
+
+### all_events
+
+Get all events with the directive instance as callback context.
+
+**Returns:** `Hash` - Event name to callbacks mapping
+
+```ruby
+events = directive.all_events
+```
+
+---
+
+### validate!
+
+Validate the directive instance and its arguments.
+
+**Raises:** `ArgumentError` if directive is unbounded or has invalid arguments
+
+```ruby
+directive.validate!
+```
+
+---
+
+### +
+
+Combine directives into an array.
+
+<ParamField path="other" type="Directive" required>
+  Another directive to combine
+</ParamField>
+
+**Returns:** `Array<Directive>`
+
+**Alias:** `&`
+
+```ruby
+combined = DeprecatedDirective(reason: 'Old') + CachedDirective(ttl: 60)
+# => [#<@deprecated>, #<@cached>]
+```
+
+---
+
+## Delegation
+
+The following methods are delegated to the class:
+
+- `locations` - Get valid locations
+- `gql_name` - Get GraphQL name
+- `gid_base_class` - Get base class
+- `repeatable?` - Check if repeatable
+
+---
+
+## Event Filters
+
+Directives support event filters to control when they trigger:
+
+### :for Filter
+
+Trigger directive for specific types.
+
+```ruby
+on :resolve, for: User do
+  # Only triggered when resolving User type
+end
+```
+
+---
+
+### :on Filter
+
+Trigger directive on specific events.
+
+```ruby
+on :resolve, on: Field do
+  # Only triggered when resolving fields
+end
+```
+
+---
+
+### :during Filter
+
+Trigger directive during specific phases.
+
+```ruby
+on :resolve, during: :execution do
+  # Only triggered during execution phase
+end
+```
+
+---
+
+## Built-in Directives
+
+### @deprecated
+
+Marks fields or enum values as deprecated.
+
+<ParamField path="reason" type="String">
+  Explanation for deprecation
+</ParamField>
+
+```ruby
+field :old_field, :string, directives: DeprecatedDirective(reason: 'Use newField instead')
+```
+
+---
+
+### @include
+
+Conditionally include fields in query execution.
+
+<ParamField path="if" type="Boolean" required>
+  Include field if true
+</ParamField>
+
+```ruby
+query {
+  user {
+    name
+    email @include(if: $includeEmail)
+  }
+}
+```
+
+---
+
+### @skip
+
+Conditionally skip fields in query execution.
+
+<ParamField path="if" type="Boolean" required>
+  Skip field if true
+</ParamField>
+
+```ruby
+query {
+  user {
+    name
+    email @skip(if: $skipEmail)
+  }
+}
+```
+
+---
+
+### @specifiedBy
+
+Provides a URL specification for scalar types.
+
+<ParamField path="url" type="String" required>
+  URL to the scalar specification
+</ParamField>
+
+```ruby
+class UUID < Rails::GraphQL::Type::Scalar
+  directives SpecifiedByDirective(url: 'https://tools.ietf.org/html/rfc4122')
+end
+```
+
+---
+
+### @cached
+
+Cache field resolution results.
+
+<ParamField path="ttl" type="Int">
+  Time to live in seconds
+</ParamField>
+
+```ruby
+field :expensive_calculation, :int, directives: CachedDirective(ttl: 300)
+```
+
+---
+
+## Example: Custom Directive
+
+```ruby
+class AuthorizeDirective < Rails::GraphQL::Directive
+  desc 'Checks if the user has required permissions'
+
+  # Can be used on fields and field definitions
+  placed_on :field, :field_definition
+
+  # Define arguments
+  argument :permission, :string, null: false
+  argument :resource, :string
+
+  # Can be used multiple times
+  self.repeatable = true
+
+  # Event callback - triggered before field resolution
+  on :resolve, during: :prepare do
+    user = event.request.context.current_user
+    
+    unless user.has_permission?(args.permission, args.resource)
+      raise GraphQL::UnauthorizedError, "Missing permission: #{args.permission}"
+    end
+  end
+end
+
+# Usage in schema
+class User < Rails::GraphQL::Type::Object
+  field :email, :string, directives: AuthorizeDirective(permission: 'read:email')
+  
+  field :ssn, :string, directives: [
+    AuthorizeDirective(permission: 'read:pii'),
+    AuthorizeDirective(permission: 'read:ssn')
+  ]
+end
+```
+
+---
+
+## Example: Rate Limiting Directive
+
+```ruby
+class RateLimitDirective < Rails::GraphQL::Directive
+  desc 'Limits the rate of field requests'
+
+  placed_on :field_definition
+
+  argument :limit, :int, null: false, desc: 'Maximum requests per window'
+  argument :window, :int, default: 60, desc: 'Time window in seconds'
+
+  on :resolve, during: :prepare do
+    key = "rate_limit:#{event.field.gql_name}:#{event.request.context.user_id}"
+    
+    count = Rails.cache.increment(key, 1, expires_in: args.window.seconds)
+    
+    if count > args.limit
+      raise GraphQL::RateLimitError, "Rate limit exceeded for #{event.field.gql_name}"
+    end
+  end
+end
+
+# Usage
+class Query < Rails::GraphQL::Type::Object
+  field :search, [Result], directives: RateLimitDirective(limit: 100, window: 60) do
+    argument :term, :string, null: false
+  end
+end
+```
+
+---
+
+## Example: Logging Directive
+
+```ruby
+class LogDirective < Rails::GraphQL::Directive
+  desc 'Logs field resolution timing'
+
+  placed_on :field, :field_definition
+
+  argument :level, :string, default: 'info'
+
+  on :resolve, during: :before do
+    event[:start_time] = Time.current
+  end
+
+  on :resolve, during: :after do
+    duration = Time.current - event[:start_time]
+    
+    Rails.logger.public_send(
+      args.level,
+      "Field #{event.field.gql_name} resolved in #{duration}s"
+    )
+  end
+end
+
+# Usage
+field :expensive_query, :Result, directives: LogDirective(level: 'debug')
+```

@@ -1,0 +1,496 @@
+---
+title: Scalars
+description: Built-in and custom scalar types for GraphQL leaf values
+---
+
+Scalars are leaf types that represent concrete data values. They're the most important type in GraphQL because they deliver actual data to clients.
+
+```graphql
+scalar String
+scalar DateTime
+```
+
+## Built-in Scalars
+
+Rails GraphQL includes all five GraphQL spec scalars:
+
+### ID
+
+Unique identifiers serialized as strings but accepting both strings and numbers.
+
+**Aliases:** `:id`, `'ID'`
+
+```ruby
+field :id, :id, null: false
+```
+
+### Int
+
+Signed 32-bit integers.
+
+**Aliases:** `:int`, `:integer`, `'Int'`
+
+```ruby
+field :age, :int
+field :count, :integer, null: false
+```
+
+### Float
+
+Signed double-precision floating point values.
+
+**Aliases:** `:float`, `'Float'`
+
+```ruby
+field :price, :float, null: false
+field :rating, :float
+```
+
+### String
+
+UTF-8 character sequences.
+
+**Aliases:** `:string`, `'String'`
+
+```ruby
+field :name, :string, null: false
+field :description, :string
+```
+
+### Boolean
+
+True or false values.
+
+**Aliases:** `:boolean`, `:bool`, `'Boolean'`
+
+```ruby
+field :active, :bool, null: false
+field :published, :boolean
+```
+
+## Extended Scalars
+
+Rails GraphQL provides additional scalars for common use cases:
+
+<Note>
+  Remember to load extended scalars as dependencies in your schema.
+</Note>
+
+### Any
+
+Accepts and returns any value without validation.
+
+**Aliases:** `:any`, `'Any'`
+
+```ruby
+load_scalars :any
+
+field :metadata, :any
+```
+
+<Warning>
+  Use `Any` sparingly. Prefer structured types for better API design.
+</Warning>
+
+### Bigint
+
+Large integers beyond the 32-bit limit, serialized as strings.
+
+**Aliases:** `:bigint`, `'Bigint'`
+
+```ruby
+load_scalars :bigint
+
+field :large_number, :bigint, null: false
+```
+
+**Example:**
+```json
+{ "largeNumber": "9223372036854775807" }
+```
+
+### Binary
+
+Base64-encoded binary data for files and uploads.
+
+**Aliases:** `:binary`, `:file`, `'Binary'`
+
+```ruby
+load_scalars :binary
+
+field :avatar, :binary
+field :attachment, :file
+```
+
+**Example:**
+```json
+{ "avatar": "iVBORw0KGgoAAAANSUhEUgAAAAUA..." }
+```
+
+### Date
+
+ISO 8601 date strings (YYYY-MM-DD).
+
+**Aliases:** `:date`, `'Date'`
+
+```ruby
+load_scalars :date
+
+field :birth_date, :date
+field :created_on, :date, null: false
+```
+
+**Example:**
+```json
+{ "birthDate": "1990-01-15" }
+```
+
+### DateTime
+
+ISO 8601 datetime strings with timezone.
+
+**Aliases:** `:date_time`, `:datetime`, `'DateTime'`
+
+```ruby
+load_scalars :date_time
+
+field :created_at, :datetime, null: false
+field :updated_at, :date_time
+```
+
+**Example:**
+```json
+{ "createdAt": "2024-01-15T10:30:00Z" }
+```
+
+### Decimal
+
+High-precision decimal numbers, serialized as strings.
+
+**Aliases:** `:decimal`, `'Decimal'`
+
+```ruby
+load_scalars :decimal
+
+field :price, :decimal, null: false
+field :tax_rate, :decimal
+```
+
+**Example:**
+```json
+{ "price": "99.99", "taxRate": "0.0825" }
+```
+
+### JSON
+
+Unstructured JSON data with arbitrary keys and values.
+
+**Aliases:** `:json`, `'Json'`, `'JSON'`
+
+```ruby
+load_scalars :json
+
+field :settings, :json
+field :metadata, 'JSON'
+```
+
+**Example:**
+```json
+{
+  "settings": {
+    "theme": "dark",
+    "notifications": true,
+    "limits": [10, 20, 50]
+  }
+}
+```
+
+<Warning>
+  JSON scalars bypass GraphQL's type system. Use Input types for structured data.
+</Warning>
+
+### Time
+
+Time duration using hours, minutes, seconds, and milliseconds.
+
+**Aliases:** `:time`, `'Time'`
+
+```ruby
+load_scalars :time
+
+field :duration, :time
+```
+
+**Example:**
+```json
+{ "duration": "01:30:45.500" }
+```
+
+## Loading Scalars
+
+Load extended scalars in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Load individual scalars
+    load_scalars :bigint, :date_time, :json
+    
+    # Alternative syntax
+    load_dependencies :scalar, :bigint, :date_time
+  end
+end
+```
+
+## Creating Custom Scalars
+
+Create custom scalars by defining transformation methods:
+
+```ruby app/graphql/scalars/email_scalar.rb
+module GraphQL
+  class EmailScalar < GraphQL::Scalar
+    desc 'A valid email address'
+    
+    class << self
+      # Validate input values
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(URI::MailTo::EMAIL_REGEXP)
+      end
+      
+      # Validate output values
+      def valid_output?(value)
+        value.is_a?(String)
+      end
+      
+      # Transform to JSON string
+      def to_json(value)
+        value.to_json
+      end
+      
+      # Transform to hash representation
+      def as_json(value)
+        value.to_s
+      end
+      
+      # Parse user input to Ruby object
+      def deserialize(value)
+        value.to_s.downcase
+      end
+    end
+  end
+end
+```
+
+### Required Methods
+
+Custom scalars should implement:
+
+<CodeGroup>
+```ruby Validation
+# Check if a value is valid input
+def self.valid_input?(value)
+  # Return true/false
+end
+
+# Check if a value is valid output
+def self.valid_output?(value)
+  # Return true/false
+end
+```
+
+```ruby Serialization
+# Convert to JSON string
+def self.to_json(value)
+  # Return JSON string
+end
+
+# Convert to Hash representation
+def self.as_json(value)
+  # Return Ruby object
+end
+```
+
+```ruby Deserialization
+# Parse input to Ruby object
+def self.deserialize(value)
+  # Return Ruby object
+end
+```
+</CodeGroup>
+
+## Scalar Examples
+
+### URL Scalar
+
+```ruby app/graphql/scalars/url_scalar.rb
+module GraphQL
+  class UrlScalar < GraphQL::Scalar
+    desc 'A valid URL'
+    
+    class << self
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(URI::DEFAULT_PARSER.make_regexp)
+      end
+      
+      def valid_output?(value)
+        value.is_a?(String) || value.is_a?(URI)
+      end
+      
+      def to_json(value)
+        value.to_s.to_json
+      end
+      
+      def as_json(value)
+        value.to_s
+      end
+      
+      def deserialize(value)
+        URI.parse(value.to_s)
+      end
+    end
+  end
+end
+```
+
+### Color Scalar
+
+```ruby app/graphql/scalars/color_scalar.rb
+module GraphQL
+  class ColorScalar < GraphQL::Scalar
+    desc 'A hex color code'
+    
+    class << self
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(/^#[0-9A-Fa-f]{6}$/)
+      end
+      
+      def valid_output?(value)
+        value.is_a?(String)
+      end
+      
+      def to_json(value)
+        value.to_json
+      end
+      
+      def as_json(value)
+        value.upcase
+      end
+      
+      def deserialize(value)
+        value.upcase
+      end
+    end
+  end
+end
+```
+
+### Phone Number Scalar
+
+```ruby app/graphql/scalars/phone_scalar.rb
+module GraphQL
+  class PhoneScalar < GraphQL::Scalar
+    desc 'A phone number in E.164 format'
+    
+    class << self
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(/^\+[1-9]\d{1,14}$/)
+      end
+      
+      def valid_output?(value)
+        value.is_a?(String)
+      end
+      
+      def to_json(value)
+        value.to_json
+      end
+      
+      def as_json(value)
+        value.to_s
+      end
+      
+      def deserialize(value)
+        # Normalize phone number
+        value.to_s.gsub(/[^+0-9]/, '')
+      end
+    end
+  end
+end
+```
+
+## Scalar Aliases
+
+Add aliases for your custom scalars:
+
+```ruby app/graphql/scalars/email_scalar.rb
+module GraphQL
+  class EmailScalar < GraphQL::Scalar
+    # Register additional names
+    aliases :email_address, 'EmailAddress', 'EMAIL'
+  end
+end
+```
+
+Now all these references work:
+
+```ruby
+field :email, :email
+field :email, :email_address
+field :email, 'EmailScalar'
+field :email, 'EmailAddress'
+field :email, 'EMAIL'
+```
+
+## Scalar Directives
+
+Add directives to scalars:
+
+```ruby app/graphql/scalars/date_time_scalar.rb
+module GraphQL
+  class DateTimeScalar < GraphQL::Scalar
+    desc 'ISO 8601 datetime'
+    
+    use :specified_by, url: 'https://www.rfc-editor.org/rfc/rfc3339'
+  end
+end
+```
+
+## Type Map Registration
+
+Scalars are automatically registered when defined:
+
+```ruby
+# Find a scalar
+GraphQL.type_map.fetch(:email)
+GraphQL::AppSchema.find_type(:email)
+
+# Check registration
+GraphQL::EmailScalar.registered?
+```
+
+## For Gem Authors
+
+When creating gems with custom scalars, register them:
+
+```ruby lib/my_gem/graphql.rb
+Rails::GraphQL.config.known_dependencies[:scalar].update(
+  my_scalar: "#{__dir__}/scalars/my_scalar",
+  another_scalar: "#{__dir__}/scalars/another_scalar",
+)
+```
+
+Users can then load them:
+
+```ruby
+load_scalars :my_scalar, :another_scalar
+```
+
+## Best Practices
+
+1. **Validate strictly** - Return false in `valid_input?` for invalid data
+2. **Normalize values** - Standardize format in `deserialize`
+3. **Document format** - Describe expected format in `desc`
+4. **Use built-ins first** - Only create custom scalars when needed
+5. **Add examples** - Include example values in documentation
+6. **Handle edge cases** - Test with nil, empty strings, etc.
+7. **Use @specifiedBy** - Link to specification documents
+8. **Consider performance** - Validation runs on every value

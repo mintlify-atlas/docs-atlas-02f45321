@@ -1,0 +1,478 @@
+---
+title: Arguments
+description: Add parameters to fields and directives for dynamic behavior and filtering
+---
+
+Arguments allow you to pass specific values to fields and directives, making them dynamic and configurable. They work like Ruby's named parameters, enabling flexible field resolution based on provided values.
+
+## Adding Arguments to Fields
+
+Add arguments to any output field using the `argument` method:
+
+```ruby
+query_fields do
+  field :user, 'User' do
+    argument :id, :id, null: false
+  end
+  
+  field :users, 'User', array: true do
+    argument :limit, :int, default: 10
+    argument :offset, :int, default: 0
+    argument :role, 'Role'
+  end
+end
+```
+
+The resulting GraphQL:
+
+```graphql
+type Query {
+  user(id: ID!): User
+  users(limit: Int = 10, offset: Int = 0, role: Role): [User]
+}
+```
+
+## Argument Syntax
+
+Basic argument definition:
+
+```ruby
+argument :name, :type, options
+```
+
+<ParamField path="name" type="Symbol | String" required>
+  The argument name (automatically converted to camelCase in GraphQL)
+</ParamField>
+
+<ParamField path="type" type="Symbol | String | Class">
+  The argument type - can be a scalar, enum, or input object
+</ParamField>
+
+<ParamField path="null" type="Boolean" default="true">
+  Whether the argument accepts null values
+</ParamField>
+
+<ParamField path="array" type="Boolean" default="false">
+  Whether the argument accepts an array of values
+</ParamField>
+
+<ParamField path="nullable" type="Boolean" default="true">
+  Whether array elements can be null
+</ParamField>
+
+<ParamField path="full" type="Boolean" default="false">
+  Shortcut for `null: false, array: true, nullable: false`
+</ParamField>
+
+<ParamField path="default" type="Any">
+  Default value when argument is not provided
+</ParamField>
+
+<ParamField path="desc" type="String">
+  Description for documentation and introspection
+</ParamField>
+
+## Argument Types
+
+Arguments accept input-compatible types:
+
+### Scalars
+
+```ruby
+field :search, 'SearchResult', array: true do
+  argument :query, :string, null: false
+  argument :limit, :int, default: 20
+  argument :offset, :int, default: 0
+  argument :include_archived, :boolean, default: false
+end
+```
+
+### Enums
+
+```ruby
+enum 'Episode', values: %i[new_hope empire jedi]
+
+query_fields do
+  field :hero, 'Character' do
+    argument :episode, 'Episode',
+      desc: 'Return for a specific episode'
+  end
+end
+```
+
+### Input Objects
+
+```ruby
+input 'UserFilter' do
+  field :role, 'Role'
+  field :active, :boolean
+end
+
+query_fields do
+  field :users, 'User', array: true do
+    argument :filter, 'UserFilter'
+  end
+end
+```
+
+### Arrays
+
+```ruby
+field :users_by_ids, 'User', array: true do
+  argument :ids, :id, array: true, null: false
+end
+
+# With non-nullable elements
+field :create_posts, 'Post', array: true do
+  argument :titles, :string, full: true  # [String!]!
+end
+```
+
+## Accessing Arguments
+
+Multiple ways to access arguments in resolvers:
+
+### Named Parameters (Recommended)
+
+```ruby
+def user(id:)
+  User.find(id)
+end
+
+def users(limit: 10, offset: 0, role: nil)
+  scope = User.limit(limit).offset(offset)
+  scope = scope.where(role: role.to_sym) if role
+  scope
+end
+```
+
+### Using `argument` Method
+
+```ruby
+def user
+  User.find(argument(:id))
+end
+```
+
+### In Blocks
+
+```ruby
+field(:user, 'User').resolve do |id:|
+  User.find(id)
+end
+
+# Or using argument method
+field(:user, 'User').resolve do
+  User.find(argument(:id))
+end
+```
+
+## Default Values
+
+Provide default values for optional arguments:
+
+```ruby
+field :users, 'User', array: true do
+  argument :limit, :int, default: 10
+  argument :order, 'SortOrder', default: 'ASC'
+  argument :active, :boolean, default: true
+end
+
+def users(limit:, order:, active:)
+  # limit defaults to 10 if not provided
+  # order defaults to 'ASC' if not provided
+  # active defaults to true if not provided
+  User.where(active: active)
+      .limit(limit)
+      .order(created_at: order.to_s.downcase)
+end
+```
+
+## Argument Helpers
+
+Use the `arg` helper for inline argument definition:
+
+```ruby Star Wars Example
+query_fields do
+  field :hero, 'Character', method_name: :find_hero,
+    arguments: arg(:episode, 'Episode', desc: 'Return for a specific episode'),
+    desc: 'Find the hero of the whole saga'
+end
+
+# Multiple arguments
+field :human, 'Human', method_name: :find_human,
+  arguments: [
+    arg(:id, :id, null: false, desc: 'ID of the human'),
+    arg(:include_friends, :boolean, default: false)
+  ]
+```
+
+<Tip>
+The `arg` helper is perfect for simple arguments. Use the block syntax for complex arguments with documentation.
+</Tip>
+
+## Array Arguments
+
+Handle array arguments with proper nullability:
+
+```ruby
+# Array that can be null, elements can be null
+argument :tags, :string, array: true
+# tags: [String]
+
+# Array cannot be null, elements can be null
+argument :tags, :string, array: true, null: false
+# tags: [String]!
+
+# Array can be null, elements cannot be null
+argument :tags, :string, array: true, nullable: false
+# tags: [String!]
+
+# Array cannot be null, elements cannot be null
+argument :tags, :string, full: true
+# tags: [String!]!
+```
+
+<Warning>
+Rails GraphQL currently only supports one-dimensional arrays. For multi-dimensional data, use nested input objects.
+</Warning>
+
+## Mutation Arguments
+
+Common mutation argument patterns:
+
+### ID + Input Pattern
+
+```ruby
+mutation_fields do
+  field :update_user, 'User', null: false do
+    argument :id, :id, null: false
+    argument :input, 'UpdateUserInput', null: false
+  end
+end
+
+def update_user(id:, input:)
+  user = User.find(id)
+  user.update!(input.params)
+  user
+end
+```
+
+### Built-in ID Argument
+
+```ruby
+mutation_fields do
+  field :change_human, 'Character', full: true do
+    desc 'Change the episodes of a human and return a set of characters'
+    
+    id_argument desc: 'The ID of the human to be changed'
+    argument :episodes, 'Episode', array: true, nullable: false
+    
+    perform :change_episodes, :humans, episodes: %w[NEW_HOPE EMPIRE]
+    resolve :character_set
+  end
+end
+```
+
+## Descriptions
+
+Document arguments for better API understanding:
+
+```ruby
+query_fields do
+  field :droid, 'Droid', method_name: :find_droid do
+    desc 'Find a droid character'
+    
+    argument :id, :id, null: false,
+      desc: 'ID of the droid'
+    
+    argument :include_friends, :boolean, default: false,
+      desc: 'Whether to preload friends for efficiency'
+  end
+end
+```
+
+## Validation
+
+Arguments validate automatically:
+
+```ruby
+field :user, 'User' do
+  argument :id, :id, null: false
+end
+
+# Valid queries
+{ user(id: "1") { name } }
+{ user(id: 1) { name } }
+
+# Invalid queries
+{ user { name } }           # Missing required argument
+{ user(id: null) { name } } # Null not allowed
+```
+
+## Argument Injection
+
+Controlled by configuration settings:
+
+```ruby
+# config/initializers/graphql.rb
+Rails::GraphQL.configure do |config|
+  # Enable automatic argument injection
+  config.callback_inject_arguments = true
+  config.callback_inject_named_arguments = true
+end
+```
+
+With injection enabled:
+
+```ruby
+def user(id:, request:, current_user:)
+  # Arguments are automatically injected based on parameter names
+  return User.find(id) if current_user.admin?
+  current_user
+end
+```
+
+Read more about [argument injection](/guides/events#argument-injection).
+
+## Common Patterns
+
+### Pagination
+
+```ruby
+query_fields do
+  field :posts, 'Post', array: true do
+    argument :first, :int, default: 10,
+      desc: 'Number of items to return'
+    argument :after, :string,
+      desc: 'Cursor for pagination'
+  end
+end
+```
+
+### Filtering
+
+```ruby
+query_fields do
+  field :users, 'User', array: true do
+    argument :role, 'Role'
+    argument :active, :boolean
+    argument :search, :string
+    argument :created_after, :date
+  end
+end
+
+def users(role: nil, active: nil, search: nil, created_after: nil)
+  scope = User.all
+  scope = scope.where(role: role.to_sym) if role
+  scope = scope.where(active: active) unless active.nil?
+  scope = scope.search(search) if search
+  scope = scope.where('created_at > ?', created_after) if created_after
+  scope
+end
+```
+
+### Sorting
+
+```ruby
+enum 'SortOrder', values: %i[asc desc]
+
+query_fields do
+  field :users, 'User', array: true do
+    argument :sort_by, :string, default: 'created_at'
+    argument :order, 'SortOrder', default: 'DESC'
+  end
+end
+
+def users(sort_by:, order:)
+  User.order(sort_by => order.to_s.downcase)
+end
+```
+
+### Optional Fields
+
+```ruby
+object 'Human' do
+  field :greeting, :string do
+    argument :name, :string, null: false,
+      desc: 'Name to greet'
+  end
+  
+  def greeting(name:)
+    format(current_value.greeting, name)
+  end
+end
+```
+
+## Query Examples
+
+```graphql Using Arguments
+query {
+  # Simple argument
+  user(id: "1") {
+    name
+  }
+  
+  # Multiple arguments
+  users(limit: 5, role: ADMIN) {
+    name
+    email
+  }
+  
+  # Array argument
+  usersByIds(ids: ["1", "2", "3"]) {
+    name
+  }
+  
+  # Enum argument
+  hero(episode: EMPIRE) {
+    name
+  }
+  
+  # Input object argument
+  searchUsers(filter: {
+    role: ADMIN
+    active: true
+  }) {
+    name
+  }
+}
+```
+
+## Best Practices
+
+<Check>
+**Argument best practices:**
+- Use `null: false` for required arguments
+- Provide sensible defaults for optional arguments
+- Use enums for constrained choices
+- Use input objects for complex argument groups
+- Document with `desc` for better DX
+</Check>
+
+<Tip>
+Think of arguments like Ruby keyword arguments - they make your API self-documenting and easier to use.
+</Tip>
+
+<Warning>
+**Current limitations:**
+- Arguments don't support directives yet
+- Only one-dimensional arrays are supported
+</Warning>
+
+## Equivalency
+
+Arguments check equivalency for interface/object validation:
+
+```ruby
+argument1 == argument2  # Name and type match
+argument1 =~ argument2  # Type matches (name can differ)
+```
+
+## Related Documentation
+
+- [Fields](/guides/fields) - Add arguments to fields
+- [Input Objects](/types/inputs) - Complex argument types
+- [Enums](/types/enums) - Constrained argument values
+- [Directives](/guides/directives) - Add arguments to directives
+- [Mutations](/guides/mutations) - Common use case for arguments

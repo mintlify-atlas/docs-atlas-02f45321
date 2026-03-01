@@ -1,0 +1,244 @@
+---
+title: 'Persisted Queries'
+description: 'Learn how to cache and reuse compiled GraphQL queries for improved performance in Rails GraphQL'
+---
+
+Persisted queries allow you to cache compiled GraphQL queries, significantly improving performance by avoiding repeated parsing and compilation of the same queries.
+
+## How Persisted Queries Work
+
+Rails GraphQL can compile a query once and store it in a cache. Subsequent requests can reference the cached version using a unique key instead of sending the full query string.
+
+### Benefits
+
+- **Performance**: Avoid parsing and compiling the same query multiple times
+- **Reduced bandwidth**: Send only a cache key instead of the full query
+- **Security**: Optionally restrict to only pre-approved queries
+
+## Compiling Queries
+
+Use the `compile` method to compile a GraphQL query for caching:
+
+```ruby
+query = GraphQL.compile('{ user(id: 1) { name email } }', schema: AppSchema)
+```
+
+The compiled query is serialized using `Marshal.dump` and optionally compressed with `Zlib.deflate`:
+
+```ruby
+# Compile without compression
+query = GraphQL.compile('{ users { id name } }', schema: AppSchema, compress: false)
+
+# Compile with compression (default)
+query = GraphQL.compile('{ users { id name } }', schema: AppSchema)
+```
+
+## Executing Compiled Queries
+
+Once compiled, execute the query using the `compiled: true` option:
+
+```ruby
+query = GraphQL.compile('{ user(id: 1) { name } }', schema: AppSchema)
+result = GraphQL.execute(query, compiled: true, schema: AppSchema)
+```
+
+## Cache Integration
+
+Rails GraphQL provides cache integration methods on the schema:
+
+### Checking Cache
+
+```ruby
+AppSchema.cached?(cache_key)
+```
+
+### Writing to Cache
+
+```ruby
+compiled_query = GraphQL.compile('{ users { id name } }', schema: AppSchema)
+AppSchema.write_on_cache(cache_key, compiled_query)
+```
+
+### Reading from Cache
+
+```ruby
+query = AppSchema.read_from_cache(cache_key)
+result = GraphQL.execute(query, compiled: true, schema: AppSchema)
+```
+
+### Fetching with Fallback
+
+```ruby
+query = AppSchema.fetch_from_cache(cache_key) do
+  GraphQL.compile('{ users { id name } }', schema: AppSchema)
+end
+```
+
+### Deleting from Cache
+
+```ruby
+AppSchema.delete_from_cache(cache_key)
+```
+
+## Cache Keys
+
+Rails GraphQL supports `CacheKey` objects for versioned cache keys:
+
+```ruby
+cache_key = Rails::GraphQL::CacheKey.new('my-query', '1.0')
+AppSchema.write_on_cache(cache_key, compiled_query)
+```
+
+Cache keys are automatically prefixed with the schema's namespace:
+
+```ruby
+# For a schema with namespace :api
+AppSchema.send(:expand_cache_key, 'user-query')
+# => 'graphql/api/user-query'
+```
+
+## Complete Example
+
+Here's a complete example implementing persisted queries:
+
+```ruby
+class GraphQL::AppSchema < GraphQL::Schema
+  namespace :api
+
+  query_fields do
+    field(:user, 'User').argument(:id, :id, null: false)
+    field(:users, 'User', array: true)
+  end
+end
+```
+
+Store a compiled query:
+
+```ruby
+# Generate a unique cache key
+cache_key = "user-query-#{SecureRandom.uuid}"
+
+# Compile and cache the query
+compiled = GraphQL.compile('{ users { id name email } }', schema: GraphQL::AppSchema)
+GraphQL::AppSchema.write_on_cache(cache_key, compiled)
+```
+
+Retrieve and execute:
+
+```ruby
+# Later, retrieve and execute the cached query
+if GraphQL::AppSchema.cached?(cache_key)
+  query = GraphQL::AppSchema.read_from_cache(cache_key)
+  result = GraphQL.execute(query, compiled: true, schema: GraphQL::AppSchema)
+else
+  # Fallback to regular execution
+  result = GraphQL.execute('{ users { id name email } }', schema: GraphQL::AppSchema)
+end
+```
+
+## Cache-Only Execution
+
+You can execute using only a cache key without providing the query string:
+
+```ruby
+# Execute using only the cache key
+result = GraphQL.execute(nil, hash: cache_key, schema: GraphQL::AppSchema)
+```
+
+This requires the query to already be in the cache, or it will fail.
+
+## Configuration
+
+### Cache Store
+
+The cache store is configured through the schema's config:
+
+```ruby
+class GraphQL::AppSchema < GraphQL::Schema
+  configure do |config|
+    config.cache = ActiveSupport::Cache::MemoryStore.new
+  end
+end
+```
+
+By default, Rails GraphQL uses the Rails cache.
+
+### Cache Prefix
+
+Each schema gets an automatic cache prefix based on its namespace:
+
+```ruby
+class GraphQL::AppSchema < GraphQL::Schema
+  namespace :api
+end
+
+# Cache keys are prefixed with 'graphql/api/'
+GraphQL::AppSchema.config.cache_prefix  # => 'graphql/api/'
+```
+
+You can customize the prefix:
+
+```ruby
+class GraphQL::AppSchema < GraphQL::Schema
+  configure do |config|
+    config.cache_prefix = 'my-custom-prefix/'
+  end
+end
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Generate stable cache keys">
+    Use deterministic cache keys based on query content or user permissions. Consider using a hash of the query string.
+  </Step>
+  
+  <Step title="Set appropriate TTLs">
+    Configure cache expiration based on how frequently your schema changes. Longer TTLs improve performance but may serve stale schemas.
+  </Step>
+  
+  <Step title="Monitor cache hit rates">
+    Track how often queries are served from cache vs. compiled fresh to optimize your caching strategy.
+  </Step>
+  
+  <Step title="Handle cache misses gracefully">
+    Always have a fallback to compile and execute queries when the cache is unavailable or empty.
+  </Step>
+</Steps>
+
+<Warning>
+Ensure your cache keys are unique per query and per schema version to avoid serving incorrect cached results.
+</Warning>
+
+## Performance Considerations
+
+### When to Use Persisted Queries
+
+<Check>
+**Use persisted queries when:**
+- You have frequently repeated queries
+- Query compilation is a performance bottleneck
+- You want to reduce client-to-server bandwidth
+- You need to allowlist approved queries
+</Check>
+
+<Info>
+**Skip persisted queries when:**
+- Queries are highly dynamic and rarely repeated
+- Cache overhead exceeds compilation cost
+- You need real-time schema reflection
+</Info>
+
+### Compression Trade-offs
+
+Compression reduces storage size but adds CPU overhead:
+
+```ruby
+# Larger in cache, faster to retrieve
+GraphQL.compile(query, schema: AppSchema, compress: false)
+
+# Smaller in cache, slower to retrieve
+GraphQL.compile(query, schema: AppSchema, compress: true)
+```
+
+Choose compression based on your cache storage limits and CPU availability.

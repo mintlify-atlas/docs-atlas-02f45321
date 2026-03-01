@@ -1,0 +1,249 @@
+---
+title: Sources
+description: Bridge between Ruby classes and GraphQL types for automatic schema generation
+---
+
+## Overview
+
+Sources are a powerful feature that translate business objects with common structures into GraphQL elements. Think of sources as a portion of your schema that is deeply connected to another class in your Ruby application. If your classes follow a pattern, you can create a source for that pattern and translate all similar classes to GraphQL.
+
+<Info>
+Sources work through a hook-based system, allowing you to define how classes are translated into GraphQL objects, inputs, queries, mutations, and subscriptions.
+</Info>
+
+## Source Architecture
+
+Sources extend from `Rails::GraphQL::Source` and use several key mechanisms:
+
+### Assignment Validation
+
+Sources validate that they can handle specific classes:
+
+```ruby
+module GraphQL
+  class AwesomeSource < GraphQL::Source::Base
+    self.abstract = true
+    
+    validate_assignment('Awesome::Base')
+  end
+end
+```
+
+The `find_for!` method locates the appropriate source for a given object:
+
+```ruby
+# From lib/rails/graphql/source.rb
+def find_for!(object)
+  find_for(object) || raise(::ArgumentError, (+<<~MSG).squish)
+    Unable to find a source for "#{object.name}".
+  MSG
+end
+```
+
+### Hook System
+
+Sources use hooks to control the build process. Available hooks include:
+
+- `start` - Runs before any other hook
+- `object` - Creates the GraphQL object type
+- `input` - Creates the input type
+- `query` - Adds query fields
+- `mutation` - Adds mutation fields
+- `subscription` - Adds subscription fields
+
+<CodeGroup>
+```ruby Hook Definition
+step(:object) do
+  assigned_class.attributes.each do |attribute, type|
+    safe_field(attribute, type)
+  end
+end
+```
+
+```ruby Multiple Hooks
+step(:query) do
+  safe_field("all_#{base_name}", :string, array: true)
+  safe_field("one_#{base_name}", :string)
+end
+
+step(:mutation) do
+  safe_field("create_#{base_name}", :bool)
+  safe_field("update_#{base_name}", :bool)
+  safe_field("delete_#{base_name}", :bool)
+end
+```
+</CodeGroup>
+
+## Managing Hooks
+
+### Adding Steps
+
+Use `step` to add hooks:
+
+```ruby
+# Add to the end (runs first due to reverse order)
+step(:query) do
+  safe_field("awesome_#{base_name}", :string, null: false) do
+    before_resolve(:load, base_name)
+  end
+end
+
+# Add to the beginning (runs last)
+step(:query, unshift: true) do
+  # This runs after other query steps
+end
+```
+
+### Controlling Hook Execution
+
+<CodeGroup>
+```ruby Skip Hooks
+# Skip parent hooks
+skip(:object, :input)
+```
+
+```ruby Override Hooks
+# Skip + step combined
+override(:query) do
+  # Only this runs
+end
+```
+
+```ruby Disable Hooks
+# Completely disable hooks
+disable(:subscription)
+```
+
+```ruby Enable Hooks
+# Re-enable or add custom hooks
+enable(:custom_hook)
+```
+</CodeGroup>
+
+## Building Sources
+
+Once defined, sources can be built selectively:
+
+<CodeGroup>
+```ruby Build All
+module GraphQL
+  class UserSource < GraphQL::AwesomeSource
+    build_all
+  end
+end
+```
+
+```ruby Selective Build
+source Awesome::User do
+  build_object
+  build_query except: [:one_user]
+end
+```
+
+```ruby In Schema
+# app/graphql/app_schema.rb
+source Awesome::User do
+  build_all
+end
+```
+</CodeGroup>
+
+## Skipping Fields
+
+Prevents specific fields from being created:
+
+<CodeGroup>
+```ruby General Skip
+skip_fields! :secure_token, :internal_id
+```
+
+```ruby Skip by Type
+skip_from :query, :one_user, :all_users
+skip_from :input, :created_at, :updated_at
+```
+
+```ruby Skip During Build
+build_query except: %i[one_user all_users]
+build_object only: %i[id name email]
+```
+</CodeGroup>
+
+## Schema Attachment
+
+Sources automatically attach to schemas based on namespaces:
+
+```ruby
+# From lib/rails/graphql/source.rb
+def attach_fields!(type = :all, from = self)
+  schemas.each { |schema| schema.import_into(type, from) }
+end
+
+def schemas
+  GraphQL.enumerate(namespaces.presence || :base).lazy.filter_map do |ns|
+    Schema.find(ns)
+  end
+end
+```
+
+<Info>
+Fields are automatically added to schemas in the same namespace as the source.
+</Info>
+
+## Configuration
+
+Add your source to the global configuration:
+
+```ruby
+# config/initializers/graphql.rb
+Rails::GraphQL.config.sources << 'GraphQL::AwesomeSource'
+```
+
+This enables inline source definitions in schemas:
+
+```ruby
+# app/graphql/app_schema.rb
+source Awesome::User  # Automatically identifies the proper source
+```
+
+## Best Practices
+
+<Card title="Use safe_field" icon="shield-check">
+Prefer `safe_field` over `field` in hooks to allow source classes to override fields:
+
+```ruby
+step(:object) do
+  safe_field(:name, :string)  # Can be overridden
+end
+```
+</Card>
+
+<Card title="Mark Base as Abstract" icon="layer-group">
+Always mark your base source classes as abstract:
+
+```ruby
+class AwesomeSource < GraphQL::Source::Base
+  self.abstract = true
+end
+```
+</Card>
+
+<Card title="Selective Building" icon="filter">
+Only build what you need to avoid schema bloat:
+
+```ruby
+build_object
+build_query
+# Don't build mutations if read-only
+```
+</Card>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="ActiveRecord Integration" icon="database" href="/advanced/activerecord-integration">
+    Built-in source for ActiveRecord models
+  </Card>
+  <Card title="Events" icon="bolt" href="/advanced/events">
+    Event system for hooks and callbacks
+  </Card>
+</CardGroup>

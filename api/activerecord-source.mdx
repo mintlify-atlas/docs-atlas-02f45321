@@ -1,0 +1,511 @@
+---
+title: 'ActiveRecordSource'
+description: 'Automatic GraphQL source generation for Active Record models with objects, inputs, queries, and mutations'
+---
+
+## Overview
+
+ActiveRecordSource allows the translation of Active Record objects into GraphQL sources, automatically creating:
+
+1. **1 Object** - GraphQL type representing the model
+2. **1 Input** - GraphQL input for create/update operations
+3. **2 Query fields** - Singular and plural queries
+4. **3 Mutation fields** - Create, update, and destroy operations
+
+It includes automatic field generation from model attributes, associations, and enums with built-in scope injection and validation.
+
+## Class Configuration
+
+### Class Attributes
+
+<ParamField path="with_associations" type="Boolean" default="true">
+  Build fields for associations related to the model
+</ParamField>
+
+<ParamField path="errors_to_extensions" type="Boolean | Symbol" default="false">
+  Export validation errors to request extensions. Use `:messages` for error messages or `true` for error details.
+</ParamField>
+
+<ParamField path="act_as_interface" type="Boolean">
+  Treat the source as an interface instead of an object (useful for STI models)
+</ParamField>
+
+<ParamField path="interface_class" type="String | Class">
+  The superclass to use for the generated GraphQL interface type
+</ParamField>
+
+```ruby
+class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+  self.with_associations = true
+  self.errors_to_extensions = :messages
+end
+```
+
+## Class Methods
+
+### model / model=
+
+Get or set the Active Record model associated with this source.
+
+<ResponseField name="return" type="Class">
+  The Active Record model class
+</ResponseField>
+
+```ruby
+class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+  self.model = User
+end
+
+UserSource.model #=> User
+```
+
+### primary_key
+
+Get the primary key column name from the model.
+
+<ResponseField name="return" type="String">
+  The primary key column name
+</ResponseField>
+
+```ruby
+UserSource.primary_key #=> "id"
+```
+
+### singular
+
+Get the singular form of the model name.
+
+<ResponseField name="return" type="String">
+  The singular model name
+</ResponseField>
+
+```ruby
+UserSource.singular #=> "user"
+```
+
+### plural
+
+Get the plural form of the model name.
+
+<ResponseField name="return" type="String">
+  The plural model name
+</ResponseField>
+
+```ruby
+UserSource.plural #=> "users"
+```
+
+### enums
+
+Access the hash of defined enums on the model for correct type assignment.
+
+<ResponseField name="return" type="Hash">
+  Hash of enum column names to their values
+</ResponseField>
+
+```ruby
+UserSource.enums #=> { "status" => { "active" => 0, "inactive" => 1 } }
+```
+
+### interface
+
+Get the interface type when using STI or when `act_as_interface` is true.
+
+<ResponseField name="return" type="Type">
+  The GraphQL interface type
+</ResponseField>
+
+```ruby
+UserSource.interface #=> #<Rails::GraphQL::Type::Interface>
+```
+
+### interface?
+
+Check if the source is building an interface instead of an object.
+
+<ResponseField name="return" type="Boolean">
+  True if building an interface
+</ResponseField>
+
+```ruby
+UserSource.interface? #=> false
+```
+
+### collection_field
+
+Provides access to the default plural query field for association interconnection.
+
+<ResponseField name="return" type="Field">
+  The plural query field
+</ResponseField>
+
+```ruby
+UserSource.collection_field #=> #<Rails::GraphQL::Field name="users">
+```
+
+## Instance Methods
+
+### load_records(scope = nil)
+
+Prepare to load multiple records from the underlying model. Applies injected scopes to the relation.
+
+<ParamField path="scope" type="ActiveRecord::Relation">
+  Optional scope to apply. Defaults to `model.default_scoped`
+</ParamField>
+
+<ResponseField name="return" type="ActiveRecord::Relation">
+  The scoped relation ready for querying
+</ResponseField>
+
+```ruby
+def load_records(scope = nil)
+  scope ||= event.last_result || model.default_scoped
+  inject_scopes(scope, :relation)
+end
+```
+
+### load_record(scope = nil, find_by: nil)
+
+Prepare to load a single record from the underlying model.
+
+<ParamField path="scope" type="ActiveRecord::Relation">
+  Optional scope to apply. Defaults to `model.default_scoped`
+</ParamField>
+
+<ParamField path="find_by" type="Hash">
+  Conditions to find the record. Defaults to primary key from arguments
+</ParamField>
+
+<ResponseField name="return" type="ActiveRecord::Base | nil">
+  The found record or nil
+</ResponseField>
+
+```ruby
+def load_record(scope = nil, find_by: nil)
+  scope ||= event.last_result || model.default_scoped
+  find_by ||= { primary_key => event.argument(primary_key) }
+  inject_scopes(scope, :relation).find_by(find_by)
+end
+```
+
+### create_record
+
+The perform step for create-based mutations. Creates and saves a new record from input arguments.
+
+<ResponseField name="return" type="ActiveRecord::Base">
+  The created record
+</ResponseField>
+
+<ResponseField name="raises" type="ActiveRecord::RecordInvalid">
+  When validation fails
+</ResponseField>
+
+```ruby
+def create_record
+  input_argument.resource.tap(&:save!)
+rescue ::ActiveRecord::RecordInvalid => error
+  errors_to_extensions(error.record.errors)
+  raise
+end
+```
+
+### update_record
+
+The perform step for update-based mutations. Updates an existing record with input parameters.
+
+<ResponseField name="return" type="ActiveRecord::Base">
+  The updated record
+</ResponseField>
+
+<ResponseField name="raises" type="ActiveRecord::RecordInvalid">
+  When validation fails
+</ResponseField>
+
+```ruby
+def update_record
+  current_value.tap { |record| record.update!(**input_argument.params) }
+rescue ::ActiveRecord::RecordInvalid => error
+  errors_to_extensions(error.record.errors)
+  raise
+end
+```
+
+### destroy_record
+
+The perform step for delete-based mutations. Destroys the current record.
+
+<ResponseField name="return" type="Boolean">
+  True if successfully destroyed
+</ResponseField>
+
+<ResponseField name="raises" type="ActiveRecord::RecordInvalid">
+  When destroy fails
+</ResponseField>
+
+```ruby
+def destroy_record
+  !!current_value.destroy!
+rescue ::ActiveRecord::RecordInvalid => error
+  errors_to_extensions(error.record.errors)
+  raise
+end
+```
+
+### preload_association(association, scope = nil)
+
+Get the chain result and preload the records with the resulting scope.
+
+<ParamField path="association" type="Symbol" required>
+  The association name to preload
+</ParamField>
+
+<ParamField path="scope" type="ActiveRecord::Relation">
+  Optional scope to apply when preloading
+</ParamField>
+
+```ruby
+def preload_association(association, scope = nil)
+  event.stop(preload(association, scope || event.last_result), layer: :object)
+end
+```
+
+### build_association_scope(association)
+
+Collect a scope for filters applied to a given association.
+
+<ParamField path="association" type="Symbol" required>
+  The association name
+</ParamField>
+
+<ResponseField name="return" type="ActiveRecord::Relation">
+  The scoped relation for the association
+</ResponseField>
+
+```ruby
+def build_association_scope(association)
+  scope = model._reflect_on_association(association).klass.default_scoped
+  inject_scopes(scope, :relation)
+end
+```
+
+### parent_owned_records(collection_result = false)
+
+Once records are pre-loaded via `preload_association`, use the parent value and preloader result to get the records.
+
+<ParamField path="collection_result" type="Boolean" default="false">
+  Whether to return an array (true) or single record (false)
+</ParamField>
+
+<ResponseField name="return" type="ActiveRecord::Base | Array | nil">
+  The associated record(s) or nil/empty array if not found
+</ResponseField>
+
+```ruby
+def parent_owned_records(collection_result = false)
+  unless event.data.key?(:prepared_data)
+    return current_value.public_send(field.method_name)
+  end
+
+  data = event.data[:prepared_data]
+  return collection_result ? [] : nil unless data
+
+  result = data.records_by_owner[current_value] || []
+  collection_result ? result : result.first
+end
+```
+
+### errors_to_extensions(errors, path = nil, format = nil)
+
+Expose validation errors to the extensions of the response.
+
+<ParamField path="errors" type="ActiveModel::Errors" required>
+  The errors object to export
+</ParamField>
+
+<ParamField path="path" type="Array<String>">
+  The path in extensions to store errors. Defaults to [operation.name, field.gql_name]
+</ParamField>
+
+<ParamField path="format" type="Symbol">
+  The format (:messages or true). Defaults to class setting
+</ParamField>
+
+```ruby
+def errors_to_extensions(errors, path = nil, format = nil)
+  format ||= self.class.errors_to_extensions
+  return unless format
+
+  path ||= [operation.name, field.gql_name].compact
+  hash = GraphQL.enumerate(path).reduce(request.extensions) { |h, k| h[k] ||= {} }
+  hash.replace(format == :messages ? errors.as_json : errors.details)
+end
+```
+
+## Hooks
+
+ActiveRecordSource extends the base Source hooks with additional ones:
+
+1. **start** - Enable AR adapter for the database
+2. **enums** - Build enum types from model enums
+3. **interface** - Build interface fields (for STI models)
+4. **object** - Build attribute and reflection fields
+5. **input** - Build input fields with defaults
+6. **query** - Build singular and plural query fields
+7. **mutation** - Build create, update, and delete mutation fields
+
+### Default Hook Implementations
+
+```ruby
+step(:start) { GraphQL.enable_ar_adapter(adapter_name) }
+
+step(:enums) { build_enum_types }
+
+step(:object) do
+  build_attribute_fields(self)
+  build_reflection_fields(self)
+end
+
+step(:input) do
+  extra = GraphQL.enumerate(primary_key).entries.product([{ null: true }]).to_h
+  build_attribute_fields(self, **extra)
+  build_reflection_inputs(self)
+  safe_field(:_delete, :boolean, default: false)
+end
+
+step(:query) do
+  build_object
+  safe_field(plural, object, full: true) do
+    before_resolve(:load_records)
+  end
+
+  safe_field(singular, object, null: false) do
+    build_primary_key_arguments(self)
+    before_resolve(:load_record)
+  end
+end
+
+step(:mutation) do
+  build_object
+  build_input
+
+  safe_field("create_#{singular}", object, null: false) do
+    argument(singular, input, null: false)
+    perform(:create_record)
+  end
+
+  safe_field("update_#{singular}", object, null: false) do
+    build_primary_key_arguments(self)
+    argument(singular, input, null: false)
+    before_resolve(:load_record)
+    perform(:update_record)
+  end
+
+  safe_field("delete_#{singular}", :boolean, null: false) do
+    build_primary_key_arguments(self)
+    before_resolve(:load_record)
+    perform(:destroy_record)
+  end
+end
+```
+
+## Protected Methods
+
+### attr_required?(attr_name)
+
+Check if a given attribute is associated with a presence validator (without `if`/`unless` conditions), ignoring attributes with default values.
+
+<ParamField path="attr_name" type="String | Symbol" required>
+  The attribute name to check
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  True if the attribute is required
+</ResponseField>
+
+## Default Field Skips
+
+By default, the following fields are skipped from input types:
+
+- `created_at`
+- `updated_at`
+
+```ruby
+skip_from(:input, :created_at, :updated_at)
+```
+
+## Example
+
+```ruby
+class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+  self.model = User
+  self.with_associations = true
+  self.errors_to_extensions = :messages
+
+  # Skip sensitive fields
+  skip_fields! :password_digest, :reset_token
+
+  # Customize object fields
+  step(:object) do
+    # Attribute fields are auto-generated
+    # Add custom fields
+    field :full_name, :string do
+      resolve { |user| "#{user.first_name} #{user.last_name}" }
+    end
+  end
+
+  # Customize queries
+  step(:query) do
+    # Default singular/plural queries are auto-generated
+    # Add custom query
+    safe_field :active_users, [object], full: true do
+      before_resolve { |source| source.load_records(User.where(status: :active)) }
+    end
+  end
+
+  # Customize mutations
+  step(:mutation) do
+    # Default create/update/delete mutations are auto-generated
+    # Add custom mutation
+    safe_field :activate_user, object, null: false do
+      build_primary_key_arguments(self)
+      before_resolve(:load_record)
+      perform do |source|
+        source.current_value.update!(status: :active)
+        source.current_value
+      end
+    end
+  end
+end
+```
+
+## STI (Single Table Inheritance) Support
+
+ActiveRecordSource automatically detects STI models and can generate interfaces:
+
+```ruby
+class PersonSource < Rails::GraphQL::Source::ActiveRecordSource
+  self.model = Person
+  self.act_as_interface = true
+  
+  step(:object) do
+    build_attribute_fields(self)
+  end
+end
+
+class EmployeeSource < PersonSource
+  self.model = Employee
+  # Automatically inherits from PersonSource interface
+end
+```
+
+## Scoped Arguments
+
+ActiveRecordSource includes the `ScopedArguments` module for injecting scopes into queries:
+
+```ruby
+class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+  # Define scopes that can be injected
+  scope :active, -> { where(status: :active) }
+  scope :search, ->(term) { where('name LIKE ?', "%#{term}%") }
+end
+```

@@ -1,0 +1,258 @@
+---
+title: GlobalID
+description: GraphQL implementation of Global ID for caching and object location with extended support for schemas and namespaces
+---
+
+## Overview
+
+Rails GraphQL extends Ruby's `GlobalID` with GraphQL-specific functionality for caching, object location, and schema-aware operations. It uses a custom `URI::GQL` scheme for GraphQL object identification.
+
+## GlobalID Class
+
+Inherits from `::GlobalID` with GraphQL-specific enhancements.
+
+### Class Methods
+
+#### create
+
+```ruby
+Rails::GraphQL::GlobalID.create(user)
+# => #<Rails::GraphQL::GlobalID:0x00...>
+
+Rails::GraphQL::GlobalID.create(user_type, scope: :admin)
+# => #<Rails::GraphQL::GlobalID:0x00...>
+```
+
+<ParamField path="object" type="Object" required>
+  The object to create a Global ID for. Must include `Helpers::WithGlobalID`.
+</ParamField>
+
+<ParamField path="options" type="Hash">
+  Additional options for the Global ID.
+  
+  <ParamField path="scope" type="Symbol">
+    Override the scope. By default, inferred from the object's schema type if the object's base class includes `Helpers::WithSchemaFields`.
+  </ParamField>
+</ParamField>
+
+Create a new GraphQL Global identifier. Returns a `Rails::GraphQL::GlobalID` instance.
+
+#### scope_of
+
+```ruby
+Rails::GraphQL::GlobalID.scope_of(user_type)
+# => :public_schema
+```
+
+<ParamField path="object" type="Object" required>
+  The object to find the scope for.
+</ParamField>
+
+Find the scope on which the object is applied to. Returns the schema type if the object's base class includes `Helpers::WithSchemaFields`.
+
+### Instance Methods
+
+#### initialize
+
+```ruby
+gid = Rails::GraphQL::GlobalID.new(uri_gql_instance)
+gid = Rails::GraphQL::GlobalID.new('gql://...')
+```
+
+<ParamField path="gid" type="URI::GQL | String" required>
+  A `URI::GQL` instance or a string that can be parsed into one.
+</ParamField>
+
+<ParamField path="options" type="Hash" default="{}">
+  Additional options (reserved for future use).
+</ParamField>
+
+Initialize a new GlobalID instance.
+
+#### Delegated Methods
+
+The following methods are delegated to the underlying `URI::GQL`:
+
+<ResponseField name="namespace" type="Symbol">
+  The namespace of the object (e.g., `:base`, `:v2`).
+</ResponseField>
+
+<ResponseField name="class_name" type="String">
+  The class name of the object (e.g., `'User'`, `'StringScalar'`).
+</ResponseField>
+
+<ResponseField name="scope" type="Symbol">
+  The schema scope (e.g., `:admin_schema`, `:public_schema`).
+</ResponseField>
+
+<ResponseField name="name" type="String">
+  The GraphQL name of the object.
+</ResponseField>
+
+<ResponseField name="instantiate?" type="Boolean">
+  Whether the object should be instantiated when found.
+</ResponseField>
+
+```ruby
+gid = Rails::GraphQL::GlobalID.create(user_type)
+
+gid.namespace   # => :base
+gid.class_name  # => "User"
+gid.scope       # => :public_schema
+gid.name        # => "User"
+```
+
+#### find
+
+```ruby
+gid = Rails::GraphQL::GlobalID.create(user_type)
+user_type = gid.find
+# => UserType
+
+gid.find(some_option: true)
+```
+
+<ParamField path="options" type="Hash" default="{}">
+  Options passed to the base class's `find_by_gid` method.
+</ParamField>
+
+Find the object using the GlobalID. Calls `find_by_gid` on the base class if it responds to that method.
+
+#### base_class
+
+```ruby
+gid = Rails::GraphQL::GlobalID.create(user_type)
+gid.base_class
+# => Rails::GraphQL::Type
+```
+
+Get the base class of the object referenced by this GlobalID:
+- If `class_name` is `'Schema'`, `'Directive'`, or `'Type'`, returns the corresponding `Rails::GraphQL` constant
+- Otherwise, fetches from the type map using the class name and namespace
+
+#### ==
+
+```ruby
+gid1 = Rails::GraphQL::GlobalID.create(user_type)
+gid2 = Rails::GraphQL::GlobalID.create(user_type)
+
+gid1 == gid2  # => true
+gid1.eql?(gid2)  # => true
+```
+
+<ParamField path="other" type="Rails::GraphQL::GlobalID" required>
+  Another GlobalID to compare.
+</ParamField>
+
+Compare two GlobalIDs for equality. Two GlobalIDs are equal if their URIs are equal.
+
+## Serializer
+
+The `GlobalID::Serializer` adds support for ActiveJob serialization, allowing GraphQL objects to be passed to jobs and deserialized for subscriptions.
+
+### Class Methods
+
+#### serialize?
+
+```ruby
+Rails::GraphQL::GlobalID::Serializer.serialize?(user_type)
+# => true
+
+Rails::GraphQL::GlobalID::Serializer.serialize?("string")
+# => false
+```
+
+<ParamField path="argument" type="Object" required>
+  The argument to check.
+</ParamField>
+
+Determines if an argument should be serialized by this serializer. Returns `true` if the argument is an instance or class that includes `Helpers::WithGlobalID`.
+
+#### serialize
+
+```ruby
+Rails::GraphQL::GlobalID::Serializer.serialize(user_type)
+# => { "_gql_globalid" => "gql://..." }
+```
+
+<ParamField path="argument" type="Object" required>
+  The argument to serialize. Must include `Helpers::WithGlobalID`.
+</ParamField>
+
+Serializes an argument to a JSON primitive type. Returns a hash with the key `"_gql_globalid"` containing the Global ID string.
+
+#### deserialize
+
+```ruby
+Rails::GraphQL::GlobalID::Serializer.deserialize({ "_gql_globalid" => "gql://..." })
+# => UserType
+```
+
+<ParamField path="argument" type="Hash" required>
+  The serialized argument with a `"_gql_globalid"` key.
+</ParamField>
+
+Deserializes an argument from a JSON primitive type. Calls `GlobalID.find` to locate and return the object.
+
+## Usage Examples
+
+### Creating and Finding Objects
+
+```ruby
+# Create a GlobalID for a GraphQL type
+user_type = UserType
+gid = Rails::GraphQL::GlobalID.create(user_type)
+
+# Convert to string
+gid.to_s
+# => "gql://base/Type/User"
+
+# Find the object later
+found_type = gid.find
+# => UserType
+
+# Or parse and find from string
+gid = Rails::GraphQL::GlobalID.new('gql://base/Type/User')
+found_type = gid.find
+```
+
+### With Scopes and Namespaces
+
+```ruby
+# Create with explicit scope
+gid = Rails::GraphQL::GlobalID.create(admin_user_type, scope: :admin)
+
+# Access metadata
+gid.namespace   # => :v2
+gid.class_name  # => "AdminUser"
+gid.scope       # => :admin
+```
+
+### ActiveJob Integration
+
+```ruby
+# In a job
+class ProcessUserTypeJob < ApplicationJob
+  def perform(user_type)
+    # user_type is automatically serialized/deserialized
+    puts user_type.gql_name
+  end
+end
+
+# Enqueue with a GraphQL type
+ProcessUserTypeJob.perform_later(UserType)
+
+# The serializer handles conversion:
+# UserType -> { "_gql_globalid" => "gql://..." } -> UserType
+```
+
+### Comparing GlobalIDs
+
+```ruby
+gid1 = Rails::GraphQL::GlobalID.create(UserType)
+gid2 = Rails::GraphQL::GlobalID.create(UserType)
+gid3 = Rails::GraphQL::GlobalID.create(PostType)
+
+gid1 == gid2  # => true
+gid1 == gid3  # => false
+```

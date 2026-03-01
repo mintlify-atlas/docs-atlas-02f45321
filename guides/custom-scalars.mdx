@@ -1,0 +1,481 @@
+---
+title: Custom Scalars
+description: Create custom scalar types with validation, serialization, and deserialization for specialized data formats.
+---
+
+## Overview
+
+Scalar types represent primitive leaf values in GraphQL. Rails GraphQL allows you to create custom scalars to handle specialized data formats like dates, decimals, JSON, and more.
+
+## Built-in Scalars
+
+Rails GraphQL includes these scalar types:
+
+- `Int` - 32-bit signed integer
+- `Float` - Signed double-precision floating-point
+- `String` - UTF-8 character sequence
+- `Boolean` - True or false
+- `ID` - Unique identifier
+- `Bigint` - Large integers (as string)
+- `Decimal` - High-precision decimals (as string)
+- `Date` - ISO 8601 date
+- `DateTime` - ISO 8601 date-time
+- `Time` - Unix timestamp
+- `JSON` - Unstructured JSON data
+- `Binary` - Base64-encoded binary data
+- `Any` - Unvalidated arbitrary value
+
+## Creating a Custom Scalar
+
+Create a custom scalar by inheriting from `Rails::GraphQL::Type::Scalar`:
+
+```ruby
+module GraphQL
+  class EmailScalar < Rails::GraphQL::Type::Scalar
+    desc 'Represents a valid email address'
+    
+    class << self
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(/\A[^@\s]+@[^@\s]+\z/)
+      end
+      
+      def valid_output?(value)
+        value.is_a?(String)
+      end
+      
+      def as_json(value)
+        value.to_s.downcase
+      end
+      
+      def to_json(value)
+        as_json(value).inspect
+      end
+      
+      def deserialize(value)
+        value.to_s.downcase
+      end
+    end
+  end
+end
+```
+
+## Required Methods
+
+Every custom scalar must implement these class methods:
+
+### `valid_input?(value)`
+
+Validates input values from GraphQL queries.
+
+```ruby
+def valid_input?(value)
+  # Check if the value is valid for GraphQL input
+  value.is_a?(String) && value.match?(/pattern/)
+end
+```
+
+<Info>
+  Return `true` if the value is valid, `false` otherwise. This is called before `deserialize`.
+</Info>
+
+### `valid_output?(value)`
+
+Validates output values before serialization.
+
+```ruby
+def valid_output?(value)
+  # Check if the value can be serialized
+  value.respond_to?(:to_s)
+end
+```
+
+### `deserialize(value)`
+
+Converts GraphQL input to Ruby objects.
+
+```ruby
+def deserialize(value)
+  # Convert input string to Ruby object
+  Date.iso8601(value)
+end
+```
+
+<Warning>
+  This method is called after `valid_input?` returns true. Handle token objects if needed:
+  ```ruby
+  value.is_a?(::GQLParser::Token) ? value.value : value
+  ```
+</Warning>
+
+### `as_json(value)`
+
+Serializes Ruby objects to JSON-compatible values.
+
+```ruby
+def as_json(value)
+  # Convert Ruby object to JSON-compatible value
+  value.to_date.iso8601
+end
+```
+
+### `to_json(value)`
+
+Serializes Ruby objects to JSON strings.
+
+```ruby
+def to_json(value)
+  # Convert to JSON string representation
+  as_json(value).inspect
+end
+```
+
+## Real-World Examples
+
+### Date Scalar
+
+From the Rails GraphQL source:
+
+```ruby
+module GraphQL
+  class DateScalar < Rails::GraphQL::Type::Scalar
+    desc 'The Date scalar type represents a ISO 8601 string value.'
+    
+    use :specified_by, url: 'https://en.wikipedia.org/wiki/ISO_8601'
+    
+    class << self
+      def valid_input?(value)
+        super && !!Date.iso8601(value)
+      rescue Date::Error
+        false
+      end
+      
+      def valid_output?(value)
+        value.respond_to?(:to_date) && !!value.to_date
+      rescue Date::Error
+        false
+      end
+      
+      def as_json(value)
+        value.to_date.iso8601
+      end
+      
+      def deserialize(value)
+        Date.iso8601(value)
+      end
+    end
+  end
+end
+```
+
+### JSON Scalar
+
+Handles unstructured JSON data:
+
+```ruby
+module GraphQL
+  class JsonScalar < Rails::GraphQL::Type::Scalar
+    rename! 'JSON'
+    
+    desc <<~DESC
+      The JSON scalar type represents an unstructured JSON data
+      with all its available keys and values.
+    DESC
+    
+    use :specified_by, url: 'https://www.rfc-editor.org/rfc/rfc8259'
+    
+    class << self
+      def valid_input?(value)
+        valid_token?(value, :hash) || value.is_a?(::Hash)
+      end
+      
+      def valid_output?(value)
+        value.is_a?(::Hash)
+      end
+      
+      def to_json(value)
+        value.to_json
+      end
+      
+      def as_json(value)
+        value.as_json
+      end
+      
+      def deserialize(value)
+        value.is_a?(::GQLParser::Token) ? JSON.parse(value) : value
+      end
+    end
+  end
+end
+```
+
+### Decimal Scalar
+
+Handles high-precision decimals:
+
+```ruby
+module GraphQL
+  class DecimalScalar < Rails::GraphQL::Type::Scalar
+    desc <<~DESC
+      The Decimal scalar type represents signed fractional values with extra precision.
+      The values are exchange as string.
+    DESC
+    
+    use :specified_by, url: 'https://en.wikipedia.org/wiki/IEEE_754-2008_revision'
+    
+    class << self
+      def valid_input?(value)
+        super && value.match?(/\A[+-]?\d+\.\d+\z/)
+      end
+      
+      def valid_output?(value)
+        value.respond_to?(:to_d)
+      end
+      
+      def as_json(value)
+        value.to_d.to_s
+      end
+      
+      def deserialize(value)
+        value.to_d
+      end
+    end
+  end
+end
+```
+
+### URL Scalar
+
+Validates and normalizes URLs:
+
+```ruby
+module GraphQL
+  class UrlScalar < Rails::GraphQL::Type::Scalar
+    desc 'Represents a valid URL'
+    
+    class << self
+      def valid_input?(value)
+        return false unless value.is_a?(String)
+        uri = URI.parse(value)
+        uri.is_a?(URI::HTTP) || uri.is_a?(URI::HTTPS)
+      rescue URI::InvalidURIError
+        false
+      end
+      
+      def valid_output?(value)
+        value.respond_to?(:to_s)
+      end
+      
+      def as_json(value)
+        value.to_s
+      end
+      
+      def to_json(value)
+        as_json(value).inspect
+      end
+      
+      def deserialize(value)
+        URI.parse(value.to_s)
+      end
+    end
+  end
+end
+```
+
+### Color Scalar
+
+Handles hex color codes:
+
+```ruby
+module GraphQL
+  class ColorScalar < Rails::GraphQL::Type::Scalar
+    desc 'Represents a hex color code (e.g., #FF5733)'
+    
+    class << self
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(/\A#[0-9A-Fa-f]{6}\z/)
+      end
+      
+      def valid_output?(value)
+        value.respond_to?(:to_s)
+      end
+      
+      def as_json(value)
+        value.to_s.upcase
+      end
+      
+      def to_json(value)
+        as_json(value).inspect
+      end
+      
+      def deserialize(value)
+        value.to_s.upcase
+      end
+    end
+  end
+end
+```
+
+## Using Custom Scalars
+
+### In Fields
+
+```ruby
+class UserType < Rails::GraphQL::Type::Object
+  field :email, EmailScalar, null: false
+  field :website, UrlScalar
+  field :favorite_color, ColorScalar
+end
+```
+
+### In Arguments
+
+```ruby
+class CreateUserMutation < Rails::GraphQL::Type::Object
+  field :create_user, UserType do
+    argument :email, EmailScalar, null: false
+    argument :website, UrlScalar
+  end
+end
+```
+
+### In Input Types
+
+```ruby
+class UserInput < Rails::GraphQL::Type::Input
+  argument :email, EmailScalar, null: false
+  argument :birth_date, DateScalar
+end
+```
+
+## Renaming Scalars
+
+Use `rename!` to set a custom GraphQL name:
+
+```ruby
+class JsonScalar < Rails::GraphQL::Type::Scalar
+  rename! 'JSON'
+  # GraphQL name will be "JSON" instead of "Json"
+end
+```
+
+## Adding Directives
+
+Use the `specified_by` directive to link to specifications:
+
+```ruby
+class DateScalar < Rails::GraphQL::Type::Scalar
+  use :specified_by, url: 'https://en.wikipedia.org/wiki/ISO_8601'
+end
+```
+
+## Helper Methods
+
+### `valid_token?(value, type = nil)`
+
+Check if a value is a parser token:
+
+```ruby
+def valid_input?(value)
+  valid_token?(value, :string) || value.is_a?(String)
+end
+```
+
+### Calling `super`
+
+The base `Scalar` class provides default implementations:
+
+```ruby
+def valid_input?(value)
+  # Base class checks for tokens or strings
+  super && value.match?(/pattern/)
+end
+```
+
+## Error Handling
+
+Handle errors gracefully in validation methods:
+
+```ruby
+def valid_input?(value)
+  return false unless value.is_a?(String)
+  Date.iso8601(value)
+  true
+rescue Date::Error
+  false
+end
+```
+
+<Warning>
+  Always return `true` or `false` from validation methods. Don't raise exceptions unless absolutely necessary.
+</Warning>
+
+## Testing Custom Scalars
+
+```ruby
+RSpec.describe GraphQL::EmailScalar do
+  describe '.valid_input?' do
+    it 'accepts valid emails' do
+      expect(described_class.valid_input?('user@example.com')).to be true
+    end
+    
+    it 'rejects invalid emails' do
+      expect(described_class.valid_input?('invalid')).to be false
+    end
+  end
+  
+  describe '.deserialize' do
+    it 'normalizes email to lowercase' do
+      expect(described_class.deserialize('USER@EXAMPLE.COM'))
+        .to eq('user@example.com')
+    end
+  end
+  
+  describe '.as_json' do
+    it 'converts to lowercase' do
+      expect(described_class.as_json('USER@EXAMPLE.COM'))
+        .to eq('user@example.com')
+    end
+  end
+end
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Validate Strictly">
+    Be strict in `valid_input?` to catch errors early. Only accept values that can be safely deserialized.
+  </Accordion>
+  
+  <Accordion title="Handle Token Objects">
+    Always check for `GQLParser::Token` objects in `deserialize` when dealing with literal values:
+    ```ruby
+    value.is_a?(::GQLParser::Token) ? value.value : value
+    ```
+  </Accordion>
+  
+  <Accordion title="Document Expected Formats">
+    Use clear descriptions to explain the expected format:
+    ```ruby
+    desc 'ISO 8601 date string (YYYY-MM-DD)'
+    ```
+  </Accordion>
+  
+  <Accordion title="Provide Examples">
+    Link to specifications or provide examples in your description to help users understand the format.
+  </Accordion>
+  
+  <Accordion title="Normalize Data">
+    Use `as_json` and `deserialize` to normalize data (lowercase emails, strip whitespace, etc.).
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Directives" icon="at" href="/guides/custom-directives">
+    Learn how to create custom directives
+  </Card>
+  <Card title="Advanced Types" icon="shapes" href="/guides/advanced/types">
+    Explore the full type system
+  </Card>
+</CardGroup>

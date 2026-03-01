@@ -1,0 +1,441 @@
+---
+title: Collectors
+description: Response collectors that use the reverse visit approach to build GraphQL responses in different formats
+---
+
+## Overview
+
+The `Collectors` module provides different strategies for building GraphQL responses. Each collector supports the same interface but optimizes for different use cases: hash-based JSON, string-based JSON, or indented text output.
+
+## HashCollector
+
+Builds JSON responses using the hash approach, keeping values as a hash that can be converted to a string later.
+
+### initialize
+
+```ruby
+HashCollector.new(request)
+```
+
+<ParamField path="request" type="Request" required>
+  The GraphQL request object
+</ParamField>
+
+### with_stack
+
+Shortcut for starting and ending a stack while executing a block.
+
+```ruby
+collector.with_stack(key, array: false, plain: false, &block)
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key to assign the stack result to
+</ParamField>
+
+<ParamField path="array" type="Boolean" default="false">
+  Whether the stack should collect as an array
+</ParamField>
+
+<ParamField path="plain" type="Boolean" default="false">
+  Whether to use a plain array (single stack level)
+</ParamField>
+
+### add
+
+Adds a value to the current collection.
+
+```ruby
+collector.add(key, value)
+collector.safe_add(key, value)  # alias
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key for the value (ignored if current collection is an array)
+</ParamField>
+
+<ParamField path="value" type="Object" required>
+  The value to add
+</ParamField>
+
+### serialize
+
+Helper to call the correct serialization method on types before adding.
+
+```ruby
+collector.serialize(klass, key, value)
+```
+
+<ParamField path="klass" type="Class" required>
+  The class that implements `as_json`
+</ParamField>
+
+<ParamField path="key" type="String | Symbol" required>
+  The key to add the serialized value to
+</ParamField>
+
+<ParamField path="value" type="Object" required>
+  The value to serialize
+</ParamField>
+
+### key?
+
+Checks if a key has already been added.
+
+```ruby
+collector.key?(key)
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key to check
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns true if the key exists (always false for array collections)
+</ResponseField>
+
+### next
+
+Marks the start of a new element in an array collection.
+
+```ruby
+collector.next
+```
+
+### append_errors
+
+Appends errors to the response.
+
+```ruby
+collector.append_errors(errors)
+```
+
+<ParamField path="errors" type="Array" required>
+  The errors collection to append
+</ParamField>
+
+### append_extensions
+
+Appends extensions to the response.
+
+```ruby
+collector.append_extensions(extensions)
+```
+
+<ParamField path="extensions" type="Hash" required>
+  The extensions hash to append
+</ParamField>
+
+### to_h / as_json
+
+Returns the generated hash object.
+
+```ruby
+collector.to_h
+collector.as_json  # alias
+```
+
+<ResponseField name="return" type="Hash">
+  The collected data as a hash
+</ResponseField>
+
+### to_s / to_json
+
+Generates the JSON string result.
+
+```ruby
+collector.to_s
+collector.to_json  # alias
+```
+
+<ResponseField name="return" type="String">
+  The JSON-encoded string (uses ActiveSupport::JSON or JSON based on configuration)
+</ResponseField>
+
+## JsonCollector
+
+Builds JSON responses using the string approach with better performance. All encoding is performed up front, but cannot return a hash.
+
+### initialize
+
+```ruby
+JsonCollector.new(request)
+```
+
+<ParamField path="request" type="Request" required>
+  The GraphQL request object
+</ParamField>
+
+### with_stack
+
+Shortcut for starting and ending a stack while executing a block.
+
+```ruby
+collector.with_stack(key, array: false, plain: false, &block)
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key to assign the stack result to
+</ParamField>
+
+<ParamField path="array" type="Boolean" default="false">
+  Whether the stack should collect as an array
+</ParamField>
+
+<ParamField path="plain" type="Boolean" default="false">
+  Whether to use a plain array (single stack level)
+</ParamField>
+
+### add
+
+Adds an already-encoded value to the current collection.
+
+```ruby
+collector.add(key, value)
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key for the value (ignored if current collection is an array)
+</ParamField>
+
+<ParamField path="value" type="String" required>
+  The pre-encoded JSON value string
+</ParamField>
+
+### safe_add
+
+Adds a value and automatically encodes it.
+
+```ruby
+collector.safe_add(key, value)
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key for the value
+</ParamField>
+
+<ParamField path="value" type="Object" required>
+  The value to encode and add
+</ParamField>
+
+### serialize
+
+Helper to call the correct serialization method on types before adding.
+
+```ruby
+collector.serialize(klass, key, value)
+```
+
+<ParamField path="klass" type="Class" required>
+  The class that implements `to_json`
+</ParamField>
+
+<ParamField path="key" type="String | Symbol" required>
+  The key to add the serialized value to
+</ParamField>
+
+<ParamField path="value" type="Object" required>
+  The value to serialize
+</ParamField>
+
+### key?
+
+Checks if a key has already been added.
+
+```ruby
+collector.key?(key)
+```
+
+<ParamField path="key" type="String | Symbol" required>
+  The key to check
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns true if the key exists in the current collection
+</ResponseField>
+
+### next
+
+Marks the start of a new element in an array collection.
+
+```ruby
+collector.next
+```
+
+### append_errors
+
+Appends errors to the response.
+
+```ruby
+collector.append_errors(errors)
+```
+
+<ParamField path="errors" type="Array" required>
+  The errors collection to append
+</ParamField>
+
+### append_extensions
+
+Appends extensions to the response.
+
+```ruby
+collector.append_extensions(extensions)
+```
+
+<ParamField path="extensions" type="Hash" required>
+  The extensions hash to append
+</ParamField>
+
+### to_s / to_json
+
+Returns the generated JSON string.
+
+```ruby
+collector.to_s
+collector.to_json  # alias
+```
+
+<ResponseField name="return" type="String">
+  The complete JSON string enclosed in braces or brackets
+</ResponseField>
+
+## IdentedCollector
+
+Builds indented string output, primarily used for displaying GraphQL schemas.
+
+### initialize
+
+```ruby
+IdentedCollector.new(initial = 0, size = 2, auto_eol: true)
+```
+
+<ParamField path="initial" type="Integer" default="0">
+  Initial indentation level
+</ParamField>
+
+<ParamField path="size" type="Integer" default="2">
+  Number of spaces per indentation level
+</ParamField>
+
+<ParamField path="auto_eol" type="Boolean" default="true">
+  Automatically add end-of-line after indented blocks
+</ParamField>
+
+### indented
+
+Creates an indented block.
+
+```ruby
+collector.indented(start = nil, finish = nil, auto_eol = @auto_eol, &block)
+```
+
+<ParamField path="start" type="String">
+  Optional string to add before indenting
+</ParamField>
+
+<ParamField path="finish" type="String">
+  Optional string to add after unindenting
+</ParamField>
+
+<ParamField path="auto_eol" type="Boolean">
+  Whether to add a line break after the block
+</ParamField>
+
+<ResponseField name="return" type="IdentedCollector">
+  Returns self for chaining
+</ResponseField>
+
+### puts
+
+Adds a string and moves to the next line.
+
+```ruby
+collector.puts(str)
+```
+
+<ParamField path="str" type="String" required>
+  The string to add
+</ParamField>
+
+### `<<` operator
+
+Appends a string to the current line.
+
+```ruby
+collector << str
+```
+
+<ParamField path="str" type="String" required>
+  The string to append
+</ParamField>
+
+<ResponseField name="return" type="IdentedCollector">
+  Returns self for chaining
+</ResponseField>
+
+### eol
+
+Adds an end-of-line marker.
+
+```ruby
+collector.eol
+```
+
+<ResponseField name="return" type="IdentedCollector">
+  Returns self for chaining
+</ResponseField>
+
+### indent
+
+Increases indentation level.
+
+```ruby
+collector.indent
+```
+
+<ResponseField name="return" type="IdentedCollector">
+  Returns self for chaining
+</ResponseField>
+
+### unindent
+
+Decreases indentation level.
+
+```ruby
+collector.unindent
+```
+
+<ResponseField name="return" type="IdentedCollector">
+  Returns self for chaining
+</ResponseField>
+
+### value
+
+Returns the final indented string.
+
+```ruby
+collector.value
+```
+
+<ResponseField name="return" type="String">
+  The complete indented text with all formatting applied
+</ResponseField>
+
+## Collector Interface
+
+All collectors implement a common interface:
+
+- `initialize(request)` - Create a new collector
+- `with_stack(key, array:, plain:)` - Manage nested structures
+- `add(key, value)` - Add data to the collection
+- `serialize(klass, key, value)` - Serialize and add data
+- `key?(key)` - Check if a key exists
+- `next` - Move to the next array element
+- `append_errors(errors)` - Add errors to the response
+- `append_extensions(extensions)` - Add extensions to the response
+
+Choose the collector based on your needs:
+
+- **HashCollector**: When you need both hash and JSON output
+- **JsonCollector**: When you only need JSON and want maximum performance
+- **IdentedCollector**: When you need human-readable formatted text (e.g., schema introspection)

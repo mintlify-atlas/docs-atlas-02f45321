@@ -1,0 +1,484 @@
+---
+title: Events
+description: Event-driven system for lifecycle hooks and callbacks throughout GraphQL execution
+---
+
+## Overview
+
+Rails GraphQL uses an event-driven architecture to handle requests and directives. Events are divided into two phases: **definition** (when components are defined) and **execution** (during request processing).
+
+<Info>
+The event system uses SimpleDelegator and custom delegators extensively for flexible callback handling.
+</Info>
+
+## Event Phases
+
+### Definition Phase
+
+Events that occur when components are being defined:
+
+```ruby
+# attach event - when directive is attached to component
+on(:attach) do
+  # Manipulate the component being attached to
+end
+```
+
+<Note>
+More definition events will be added as the gem evolves.
+</Note>
+
+### Execution Phase
+
+Events during request processing. See [Request Event Types](/core/request#event-types) for the full list.
+
+<CodeGroup>
+```ruby Field Events
+field(:id).on(:finalize) do
+  # Multiply the id by 10 before adding to response
+  self.current_value = current_value * 10
+end
+```
+
+```ruby Directive Events
+on(:organized) { do_something }
+on(:prepared) { prepare_data }
+on(:finalize) { cleanup }
+```
+</CodeGroup>
+
+## Event Listeners
+
+Add listeners using the `on` method:
+
+<CodeGroup>
+```ruby Block Listener
+field(:id).on(:organized) { do_something }
+```
+
+```ruby Method Listener
+field(:id).on(:organized, :do_something)
+```
+
+```ruby With Arguments
+field(:id).on(:finalize, 123) { |value| puts value }
+```
+</CodeGroup>
+
+## Event Shortcuts
+
+Fields provide shortcut methods for common events:
+
+<CodeGroup>
+```ruby Shortcut Methods
+field(:name)
+  .organized { setup }
+  .prepared { prepare }
+  .before_resolve { load_data }  # alias for prepare
+  .after_resolve { cleanup }     # alias for finalize
+  .authorize { check_permissions }
+```
+
+```ruby Special Events
+# resolve and perform are unique
+field(:user).resolve { User.find(id) }
+field(:user).perform { User.create!(params) }
+```
+</CodeGroup>
+
+<Warning>
+`resolve` and `perform` are exclusive - fields can only have one, and they cannot be set with `on`.
+</Warning>
+
+## Callback Arguments
+
+Argument injection is controlled by two settings:
+- `callback_inject_arguments`
+- `callback_inject_named_arguments`
+
+### Basic Injection
+
+```ruby
+# From lib/rails/graphql/event.rb
+class Event
+  attr_reader :source, :data, :event_name, :object, :last_result
+  
+  def parameter(name)
+    respond_to?(name) ? public_send(name) : data[name]
+  end
+end
+```
+
+<CodeGroup>
+```ruby Event Injection
+on(:finalize) { |event| event.inspect }
+```
+
+```ruby Request Injection
+on(:finalize) { |request| request.inspect }
+```
+
+```ruby Multiple Parameters
+on(:finalize) { |field, memo| (memo[field] ||= []) << 1 }
+```
+
+```ruby Named Arguments
+on(:finalize) { |request:| request.inspect }
+```
+
+```ruby Argument Values
+argument(:direction, null: false, default: 'asc')
+on(:finalize) { |direction:| sort_by(direction) }
+```
+</CodeGroup>
+
+### With Extra Arguments
+
+Extra arguments have higher precedence:
+
+```ruby
+on(:finalize, 123) { |event| event.inspect }
+#                     ↳ This will be 123
+
+on(:finalize, 123) { |value, event| event.inspect }
+#                            ↳ Event injected second
+
+on(:finalize, format: :string) { |direction:| ... }
+#                                 ↳ Works with named args
+
+on(:prepare, :sort_records, :name)
+def sort_records(field)
+  # Extra arg injected first
+end
+```
+
+## Calling Next
+
+Capture and manipulate values from the event chain:
+
+```ruby
+# From lib/rails/graphql/event.rb
+def call_next
+  trigger(@items.next)
+rescue StopIteration
+  # Do not do anything when missing next/super
+end
+```
+
+<CodeGroup>
+```ruby Using last_result
+on(:finalize) { 1 }                                                 # 1
+on(:finalize) { |event| event.last_result * 10 }                    # 1 * 10
+on(:finalize) { |event| event.last_result + 4 }                     # 10 + 4
+on(:finalize) { |event| event.current_value = event.last_result }   # 14
+# Result: 14
+```
+
+```ruby Using call_next
+on(:finalize) { 1 }                                                 # 1
+on(:finalize) { |event| event.call_next * 10 }                      # 5 * 10
+on(:finalize) { |event| event.last_result + 4 }                     # 1 + 4
+on(:finalize) { |event| event.current_value = event.last_result }   # 50
+# Result: 50
+```
+</CodeGroup>
+
+### Practical Example
+
+Extending ActiveRecord scopes:
+
+```ruby
+# Field created by ActiveRecord source
+field = field(:addresses, 'Address', full: true) do
+  before_resolve(:preload_association, :addresses)
+  before_resolve(:build_association_scope, :addresses)
+  resolve(:parent_owned_records, true)
+end
+
+# Extend the scope
+field.before_resolve do
+  call_next.where(deleted_at: nil)
+end
+```
+
+<Info>
+The `prepare` (`before_resolve`) event runs in reverse order, so the last listener added runs first.
+</Info>
+
+## Directive Events
+
+Directive events have special characteristics:
+
+### Binding
+
+Binding is always the directive instance:
+
+```ruby
+# app/graphql/directives/awesome_directive.rb
+on(:finalize) do
+  self  # => directive instance
+  event # => available as @event
+end
+```
+
+### Event Arguments
+
+With injection disabled:
+
+```ruby
+# From docs/guides/events.md
+on(:finalize) { self.inspect }
+#               ↳ No injection
+
+on(:finalize) { |event| event.inspect }
+#                ↳ Event as extra argument
+
+on(:finalize, Rails.env) { |env, event| event.inspect }
+#                                ↳ Event always last
+
+on(:finalize, :inspect_event)
+def inspect_event
+  event.inspect  # @event reader available
+end
+```
+
+<Warning>
+Directives do not automatically delegate missing methods to `@event`.
+</Warning>
+
+### Event Filters
+
+Narrow event triggering with filters:
+
+```ruby
+on :attach, during: :definition
+on :finalize, during: :execution
+```
+
+<ResponseField name="during" type=":definition | :execution">
+  Filter by event phase
+</ResponseField>
+
+<Note>
+More filters will be added in future versions.
+</Note>
+
+## Exclusiveness
+
+By default, events only trigger when the source matches:
+
+```ruby
+# From lib/rails/graphql/event.rb
+def same_source?(other)
+  if other.is_a?(Directive) || (other.is_a?(Module) && other < Directive)
+    event_name == :attach || source.using?(other)
+  else
+    source == other
+  end
+end
+```
+
+<CodeGroup>
+```ruby Exclusive (default)
+field(:id).on(:finalize) do
+  # Only triggers for :id field
+end
+```
+
+```ruby Non-exclusive
+on(:finalize, exclusive_callback: false) do |source|
+  # Triggers for anything in the stack
+  puts "#{source.gql_name} resolved!"
+end
+```
+</CodeGroup>
+
+### Directive Example
+
+```ruby
+# app/graphql/directives/logger_directive.rb
+on(:finalize, exclusive_callback: false) do |source|
+  puts "#{source.gql_name} has been resolved!"
+end
+
+# app/graphql/app_schema.rb
+use :logger
+
+# Logs every field resolution in the schema
+```
+
+## Event Triggering
+
+Multiple trigger modes:
+
+```ruby
+# From lib/rails/graphql/event.rb
+TRIGGER_TYPES = {
+  all?: :trigger_all,
+  stack?: :trigger_all,
+  object?: :trigger_object,
+  single?: :trigger,
+}.freeze
+
+def self.trigger(event_name, object, source, **xargs, &block)
+  extra = xargs.slice!(*TRIGGER_TYPES.keys)
+  fallback = extra.delete(:fallback_trigger!) || :trigger
+  method_name = xargs.find { |k, v| break TRIGGER_TYPES[k] if v } || fallback
+  
+  instance = new(event_name, source, **extra)
+  instance.instance_variable_set(:@object, object) if block.present?
+  instance.public_send(method_name, block || object)
+end
+```
+
+<CodeGroup>
+```ruby Single Trigger
+Event.trigger(:finalize, field, source, single?: true)
+```
+
+```ruby Object Trigger
+Event.trigger(:prepared, type, source, object?: true)
+```
+
+```ruby Stack Trigger
+Event.trigger(:organized, [field1, field2], source, all?: true)
+```
+</CodeGroup>
+
+## Stopping Events
+
+Halt event execution:
+
+```ruby
+# From lib/rails/graphql/event.rb
+def stop(*result, layer: nil)
+  layer = @layers[layer] if layer.is_a?(Numeric)
+  throw(layer || @layers.first, *result)
+end
+```
+
+<CodeGroup>
+```ruby Stop Current
+on(:finalize) do |event|
+  event.stop(42) if condition?
+  # Subsequent listeners won't run
+end
+```
+
+```ruby Stop Specific Layer
+on(:finalize) do |event|
+  event.stop(result, layer: :object)
+end
+```
+</CodeGroup>
+
+## Callbacks
+
+Event listeners are compiled into `Callback` objects:
+
+```ruby
+callback = GraphQL::AppSchema[:query][:welcome].resolver
+callback.source_location
+# => ["(symbolized-callback/#<... AppSchema[:query] welcome: String>)", :welcome]
+
+callback.call(event)
+# => executes the callback
+```
+
+### Types
+
+<Tabs>
+  <Tab title="Proc-based">
+    Created with blocks:
+
+    ```ruby
+    on(:finalize) { do_something }
+    ```
+
+    Binding is the event (or directive instance).
+  </Tab>
+  
+  <Tab title="Method-based">
+    Created with method references:
+
+    ```ruby
+    on(:finalize, :do_something)
+    
+    def do_something
+      # @event available
+      # Normal binding maintained
+    end
+    ```
+
+    Forces instance creation, attaches `@event` variable.
+  </Tab>
+</Tabs>
+
+## Available Event Data
+
+What you can access from events:
+
+```ruby
+# From docs/guides/events.md
+def welcome
+  data                      # Additional data from trigger
+  event                     # Event instance
+  event_name                # Name of the event
+  last_result               # Last result in chain
+  object                    # Object calling trigger
+  source                    # Event source
+  
+  parameter(name)           # try(name) || data[name]
+  [name]                    # Same as parameter
+  parameter?(name)          # respond_to?(name) || data.key?(name)
+  key?(name)                # Same as parameter?
+  stop(*result)             # Stop and return result
+end
+```
+
+<Info>
+Request events provide additional parameters. See [Request Event](/core/request#event) documentation.
+</Info>
+
+## Best Practices
+
+<Card title="Use Shortcuts" icon="bolt">
+  Prefer shortcut methods for readability:
+
+  ```ruby
+  # Good
+  field(:user).before_resolve { load_user }
+  
+  # Less clear
+  field(:user).on(:prepare) { load_user }
+  ```
+</Card>
+
+<Card title="Chain call_next" icon="link">
+  Use `call_next` to extend behavior:
+
+  ```ruby
+  field.before_resolve do
+    call_next.where(active: true)
+  end
+  ```
+</Card>
+
+<Card title="Named Arguments" icon="signature">
+  Use named arguments for clarity:
+
+  ```ruby
+  on(:prepare) { |id:, type:| Model.find_by(id: id, type: type) }
+  ```
+</Card>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Request" icon="paper-plane" href="/core/request">
+    Request event types and lifecycle
+  </Card>
+  <Card title="Directives" icon="at" href="/core/directives">
+    Using events in directives
+  </Card>
+</CardGroup>

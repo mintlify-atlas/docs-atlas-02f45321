@@ -1,0 +1,461 @@
+---
+title: Input Objects
+description: Define structured input types for complex arguments in mutations and queries
+---
+
+Input objects organize multiple fields into structured arguments. They're the input equivalent of objects, perfect for mutations and queries that accept complex data with multiple attributes.
+
+## Basic Input Definition
+
+Define input objects in files or inline within your schema:
+
+<CodeGroup>
+```ruby File-based Definition
+# app/graphql/inputs/user_input.rb
+module GraphQL
+  class UserInput < GraphQL::Input
+    field :name, :string, null: false
+    field :email, :string, null: false
+    field :role, 'Role'
+  end
+end
+```
+
+```ruby Schema Definition
+# app/graphql/app_schema.rb
+input 'UserInput' do
+  field :name, :string, null: false
+  field :email, :string, null: false
+  field :role, 'Role'
+end
+```
+</CodeGroup>
+
+The resulting GraphQL type:
+
+```graphql
+input UserInput {
+  name: String!
+  email: String!
+  role: Role
+}
+```
+
+## Allowed Field Types
+
+Input objects can only contain input-compatible types:
+
+<Check>
+**Valid field types:**
+- Scalars (`:string`, `:int`, `:boolean`, etc.)
+- Enums
+- Other Input objects
+</Check>
+
+<Warning>
+**Invalid field types:**
+- Objects (output types)
+- Interfaces
+- Unions
+</Warning>
+
+```ruby
+input 'CreatePostInput' do
+  field :title, :string, null: false
+  field :body, :string
+  field :status, 'PostStatus'        # ✓ Enum
+  field :author, 'UserInput'          # ✓ Another input
+  field :tags, :string, array: true   # ✓ Array of scalars
+  
+  # field :author, 'User'             # ✗ Object type
+end
+```
+
+## Using Input Objects
+
+Input objects work as argument types:
+
+```ruby
+mutation_fields do
+  field :create_user, 'User', null: false do
+    argument :user, 'UserInput', null: false
+  end
+end
+```
+
+### Direct Input
+
+```graphql
+mutation {
+  createUser(user: {
+    name: "John Doe"
+    email: "john@example.com"
+    role: ADMIN
+  }) {
+    id
+    name
+    email
+  }
+}
+```
+
+### With Variables
+
+```graphql
+mutation CreateUser($user: UserInput!) {
+  createUser(user: $user) {
+    id
+    name
+  }
+}
+```
+
+```json Variables
+{
+  "user": {
+    "name": "John Doe",
+    "email": "john@example.com",
+    "role": "ADMIN"
+  }
+}
+```
+
+## Input Instance Methods
+
+Input instances provide several helpful methods:
+
+### Field Access
+
+Access fields using snake_case names:
+
+```ruby
+def create_user(user:)
+  # user is a UserInput instance
+  user.args.name       # => "John Doe"
+  user.args.email      # => "john@example.com"
+  user.args.first_name # camelCase → snake_case
+end
+```
+
+### Params Hash
+
+Get a sanitized hash (like Strong Parameters):
+
+```ruby
+input 'UserInput' do
+  field :first_name, :string
+  field :last_name, :string
+  field :email, :string
+end
+
+def create_user(user:)
+  user.params
+  # => { first_name: "John", last_name: "Doe", email: "john@example.com" }
+  
+  User.create!(user.params)
+end
+```
+
+<Tip>
+Input params work like [ActionController::StrongParameters](https://edgeapi.rubyonrails.org/classes/ActionController/StrongParameters.html) - they validate types and convert names automatically.
+</Tip>
+
+### JSON Conversion
+
+```ruby
+user.as_json
+# => { "firstName" => "John", "lastName" => "Doe", "email" => "john@example.com" }
+
+user.to_json
+# => '{"firstName":"John","lastName":"Doe","email":"john@example.com"}'
+```
+
+## Type Assignment
+
+Assign inputs to Ruby classes for automatic resource creation:
+
+```ruby
+input 'UserInput' do
+  self.assigned_to = 'User'
+  
+  field :first_name, :string
+  field :last_name, :string
+  field :email, :string, null: false
+end
+
+def create_user(user:)
+  # Access the assigned resource
+  user.resource           # => #<User first_name: "John", ...>
+  
+  # Save directly
+  user.save!              # Delegates to user.resource.save!
+  
+  # Or provide additional params
+  user.resource(id: 1, created_at: Time.now)
+  # => #<User id: 1, first_name: "John", created_at: ...>
+end
+```
+
+<Info>
+Methods not defined on the input instance automatically delegate to `resource`, making inputs feel like models.
+</Info>
+
+## Nested Input Objects
+
+Input objects can nest other input objects:
+
+```ruby
+input 'AddressInput' do
+  field :street, :string, null: false
+  field :city, :string, null: false
+  field :postal_code, :string
+end
+
+input 'UserInput' do
+  field :name, :string, null: false
+  field :email, :string, null: false
+  field :address, 'AddressInput'
+end
+```
+
+```graphql
+mutation {
+  createUser(user: {
+    name: "John Doe"
+    email: "john@example.com"
+    address: {
+      street: "123 Main St"
+      city: "Springfield"
+      postalCode: "12345"
+    }
+  }) {
+    id
+    name
+  }
+}
+```
+
+Access nested inputs:
+
+```ruby
+def create_user(user:)
+  user.params
+  # => {
+  #   name: "John Doe",
+  #   email: "john@example.com",
+  #   address: {
+  #     street: "123 Main St",
+  #     city: "Springfield",
+  #     postal_code: "12345"
+  #   }
+  # }
+end
+```
+
+## Default Values
+
+Set default values for optional fields:
+
+```ruby
+input 'CreatePostInput' do
+  field :title, :string, null: false
+  field :status, 'PostStatus', default: 'DRAFT'
+  field :published, :boolean, default: false
+end
+```
+
+## Auto-Suffix Configuration
+
+Configure automatic "Input" suffix:
+
+```ruby
+# config/initializers/graphql.rb
+Rails::GraphQL.configure do |config|
+  config.auto_suffix_input_objects = 'Input'
+end
+```
+
+```ruby
+input 'User' do  # Becomes "UserInput" in GraphQL
+  field :name
+end
+
+GraphQL::User.gql_name  # => "UserInput"
+```
+
+## Common Patterns
+
+### Create Mutations
+
+```ruby
+input 'CreateUserInput' do
+  field :name, :string, null: false
+  field :email, :string, null: false
+  field :role, 'Role', default: 'USER'
+end
+
+mutation_fields do
+  field :create_user, 'User', null: false do
+    argument :input, 'CreateUserInput', null: false
+  end
+end
+
+def create_user(input:)
+  User.create!(input.params)
+end
+```
+
+### Update Mutations
+
+```ruby
+input 'UpdateUserInput' do
+  field :name, :string
+  field :email, :string
+  field :role, 'Role'
+end
+
+mutation_fields do
+  field :update_user, 'User', null: false do
+    argument :id, :id, null: false
+    argument :input, 'UpdateUserInput', null: false
+  end
+end
+
+def update_user(id:, input:)
+  user = User.find(id)
+  user.update!(input.params)
+  user
+end
+```
+
+### Filter Inputs
+
+```ruby
+input 'UserFilter' do
+  field :role, 'Role'
+  field :active, :boolean
+  field :search, :string
+end
+
+query_fields do
+  field :users, 'User', array: true do
+    argument :filter, 'UserFilter'
+  end
+end
+
+def users(filter: nil)
+  scope = User.all
+  return scope unless filter
+  
+  scope = scope.where(role: filter.role.to_sym) if filter.args.role
+  scope = scope.where(active: filter.active) if filter.args.active
+  scope = scope.search(filter.search) if filter.args.search
+  scope
+end
+```
+
+### Batch Operations
+
+```ruby
+input 'CreatePostInput' do
+  field :title, :string, null: false
+  field :body, :string
+end
+
+mutation_fields do
+  field :create_posts, 'Post', array: true, null: false do
+    argument :inputs, 'CreatePostInput', array: true, null: false
+  end
+end
+
+def create_posts(inputs:)
+  inputs.map { |input| Post.create!(input.params) }
+end
+```
+
+## Validation
+
+Inputs validate automatically:
+
+```ruby
+input 'UserInput' do
+  field :email, :string, null: false
+end
+
+GraphQL::UserInput.valid_input?({ email: "test@example.com" })
+# => true
+
+GraphQL::UserInput.valid_input?({ name: "John" })
+# => false (missing required email)
+```
+
+Manual validation:
+
+```ruby
+def create_user(input:)
+  input.validate!  # Raises InvalidValueError if invalid
+  User.create!(input.params)
+end
+```
+
+## Descriptions
+
+Document input objects and fields:
+
+```ruby
+input 'UserInput' do
+  desc 'Input for creating or updating a user'
+  
+  field :name, :string, null: false,
+    desc: 'Full name of the user'
+    
+  field :email, :string, null: false,
+    desc: 'Primary email address'
+end
+```
+
+## Best Practices
+
+<Check>
+**Use input objects for:**
+- Mutations with multiple parameters
+- Complex query filters
+- Nested data structures
+- Reusable input patterns
+- Type-safe parameter validation
+</Check>
+
+<Tip>
+Create separate inputs for create vs. update operations - create inputs have required fields, update inputs make everything optional.
+</Tip>
+
+<Warning>
+Avoid deeply nested input objects (more than 2-3 levels) - they become hard to use and validate.
+</Warning>
+
+## Hash Access
+
+Access as hash or object:
+
+```ruby
+def create_user(user:)
+  # Object-style
+  user.args.name
+  user.args.email
+  
+  # Hash-style
+  user[:name]
+  user[:email]
+  
+  # Full hash
+  user.to_h
+  # => { name: "John", email: "john@example.com" }
+end
+```
+
+## Related Documentation
+
+- [Arguments](/types/arguments) - Use inputs as argument types
+- [Mutations](/guides/mutations) - Common use case for inputs
+- [Type Assignment](/guides/advanced/type-assignment) - Map inputs to models
+- [Strong Parameters](https://edgeapi.rubyonrails.org/classes/ActionController/StrongParameters.html) - Similar Rails concept

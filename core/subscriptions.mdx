@@ -1,0 +1,454 @@
+---
+title: Subscriptions
+description: Real-time GraphQL subscriptions with ActionCable integration
+---
+
+Subscriptions enable real-time updates from your GraphQL API. They fetch initial data and keep results up-to-date through WebSocket connections.
+
+```graphql
+subscription {
+  userUpdated(id: 1) {
+    id
+    name
+    status
+  }
+}
+```
+
+## Subscription Structure
+
+A subscription consists of five elements:
+
+- **type** - `subscription` (required)
+- **name** - Optional subscription name
+- **variables** - Optional variable definitions
+- **directives** - Optional directives
+- **selection** - One field from schema subscription fields
+
+```graphql
+subscription OnUserUpdate($userId: ID!) {
+  userUpdated(id: $userId) {
+    id
+    status
+  }
+}
+```
+
+<Warning>
+  Unlike queries and mutations, subscriptions can only have a single root field.
+</Warning>
+
+## Defining Subscription Fields
+
+Define subscription fields in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    subscription_fields do
+      field(:user_updated, 'User') do
+        argument :id, :id, null: false
+        
+        scope :current_user
+        
+        subscribed do
+          puts "New subscription: #{subscription.id}"
+        end
+      end
+      
+      field(:post_created, 'Post') do
+        scope ->(subscription) { subscription.context.current_user }
+      end
+    end
+  end
+end
+```
+
+## ActionCable Integration
+
+Subscriptions work with ActionCable by default. Configure the provider in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Default ActionCable configuration
+    config.subscription_provider =
+      Rails::GraphQL::Subscription::Provider::ActionCable.new(
+        cable: ::ActionCable,
+        prefix: 'graphql',
+        store: Rails::GraphQL::Subscription::Store::Memory.new,
+        logger: GraphQL::AppSchema.logger,
+      )
+  end
+end
+```
+
+### ActionCable Channel
+
+Create a channel for GraphQL subscriptions:
+
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  def subscribed
+    @subscription_ids = []
+  end
+  
+  def execute(data)
+    result = GraphQL::AppSchema.execute(
+      data['query'],
+      variables: data['variables'],
+      context: { current_user: current_user, channel: self },
+      operation_name: data['operationName']
+    )
+    
+    transmit(result)
+  end
+  
+  def unsubscribed
+    @subscription_ids.each do |sid|
+      GraphQL::AppSchema.remove_subscriptions(sid)
+    end
+  end
+end
+```
+
+### Client Setup
+
+Connect to subscriptions from your client:
+
+```javascript
+import { createConsumer } from "@rails/actioncable"
+
+const cable = createConsumer()
+
+const subscription = cable.subscriptions.create("GraphqlChannel", {
+  connected() {
+    this.perform("execute", {
+      query: `
+        subscription {
+          userUpdated(id: 1) {
+            id
+            name
+            status
+          }
+        }
+      `
+    })
+  },
+  
+  received(data) {
+    console.log("Received:", data)
+  }
+})
+```
+
+## Subscription Options
+
+### Scope
+
+Define conditions for delivering updates:
+
+```ruby
+subscription_fields do
+  field(:user_updated, 'User') do
+    argument :id, :id, null: false
+    
+    # Scope to current user
+    scope :current_user
+    
+    # Or use a proc
+    scope ->(subscription) {
+      subscription.request.context.current_user
+    }
+    
+    # Or multiple scopes
+    scope :current_user, :system_version
+  end
+end
+```
+
+Scopes are evaluated when:
+- A subscription is created
+- Updates are triggered
+
+### Subscribed Callback
+
+Execute code when a subscription is created:
+
+```ruby
+subscription_fields do
+  field(:user_updated, 'User') do
+    argument :id, :id, null: false
+    
+    subscribed do
+      # Access subscription details
+      puts subscription.id
+      puts subscription.field
+      puts subscription.args
+      puts subscription.scope
+      puts subscription.context
+      
+      # Perform side effects
+      SubscriptionLog.create!(
+        user_id: context.current_user.id,
+        subscription_id: subscription.id
+      )
+    end
+  end
+end
+```
+
+## Triggering Updates
+
+Trigger subscription updates from anywhere in your application:
+
+### trigger Method
+
+```ruby
+# Get the subscription field
+field = GraphQL::AppSchema[:subscription][:user_updated]
+
+# Trigger for all subscriptions
+field.trigger
+
+# Trigger for specific arguments
+field.trigger(args: { id: 1 })
+
+# Trigger for multiple arguments
+field.trigger(args: [{ id: 1 }, { id: 2 }])
+
+# Trigger for specific scope
+field.trigger(scope: current_user)
+
+# Combine arguments and scope
+field.trigger(args: { id: 1 }, scope: current_user)
+```
+
+### trigger_for Method
+
+Trigger with automatic argument extraction:
+
+```ruby
+field = GraphQL::AppSchema[:subscription][:user_updated]
+
+# Trigger from a single object
+user = User.find(1)
+field.trigger_for(user)  # Extracts { id: 1 }
+
+# Trigger from multiple objects
+users = User.where(active: true)
+field.trigger_for(users)  # Extracts [{ id: 1 }, { id: 2 }, ...]
+
+# Disable prepared data
+field.trigger_for(user, and_prepare: false)
+```
+
+<Info>
+  `trigger_for` automatically prepares data so the subscription doesn't need to reload records.
+</Info>
+
+### In Model Callbacks
+
+```ruby app/models/user.rb
+class User < ApplicationRecord
+  after_update :trigger_subscription
+  
+  private
+  
+  def trigger_subscription
+    field = GraphQL::AppSchema[:subscription][:user_updated]
+    field.trigger_for(self)
+  end
+end
+```
+
+### In Controllers
+
+```ruby app/controllers/users_controller.rb
+class UsersController < ApplicationController
+  def update
+    @user = User.find(params[:id])
+    
+    if @user.update(user_params)
+      field = GraphQL::AppSchema[:subscription][:user_updated]
+      field.trigger_for(@user)
+      
+      render json: @user
+    else
+      render json: @user.errors, status: :unprocessable_entity
+    end
+  end
+end
+```
+
+## Broadcasting
+
+By default, subscriptions with identical criteria are broadcasted together:
+
+```ruby
+field(:user_updated, 'User') do
+  argument :id, :id, null: false
+  
+  # Mark a field as not broadcastable
+  field :is_following, :bool, broadcastable: false
+end
+```
+
+When `is_following` is requested, each subscriber gets a personalized response:
+
+```graphql
+subscription {
+  userUpdated(id: 1) {
+    name          # Broadcasted to all
+    isFollowing   # Personalized per subscriber
+  }
+}
+```
+
+Control broadcasting at the schema level:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    config.default_subscription_broadcastable = false
+  end
+end
+```
+
+## Unsubscribing
+
+Force remove subscriptions:
+
+```ruby
+field = GraphQL::AppSchema[:subscription][:user_updated]
+
+# Unsubscribe with same pattern as trigger
+field.unsubscribe(args: { id: 1 })
+field.unsubscribe(scope: current_user)
+
+# Unsubscribe using objects
+field.unsubscribe_from(user)
+field.unsubscribe_from(User.all)
+```
+
+Clients receive a final update indicating no more data will arrive.
+
+## Subscription Object
+
+Subscription objects store information needed for re-evaluation:
+
+```ruby
+subscribed do
+  subscription.id              # Unique identifier
+  subscription.sid             # Alias for id
+  subscription.schema          # Schema namespace
+  subscription.context         # Request context
+  subscription.scope           # Scope values
+  subscription.operation_id    # Cached operation ID
+  subscription.origin          # Subscription origin
+  subscription.field           # Subscription field
+  subscription.args            # Field arguments
+  subscription.broadcastable   # Can be broadcasted?
+  subscription.created_at      # Creation timestamp
+  subscription.updated_at      # Last update timestamp
+end
+```
+
+## Subscription Providers
+
+Providers handle the pub-sub architecture:
+
+### ActionCable Provider (Default)
+
+```ruby
+config.subscription_provider =
+  Rails::GraphQL::Subscription::Provider::ActionCable.new(
+    cable: ::ActionCable,
+    prefix: 'graphql',
+    store: Rails::GraphQL::Subscription::Store::Memory.new,
+    logger: Rails.logger,
+  )
+```
+
+### Memory Store
+
+The default store keeps subscriptions in memory:
+
+```ruby
+store = Rails::GraphQL::Subscription::Store::Memory.new
+```
+
+<Warning>
+  Memory store subscriptions are lost on server restart. Use a persistent store for production.
+</Warning>
+
+## Subscription Examples
+
+### User Updates
+
+```graphql
+subscription {
+  userUpdated(id: 1) {
+    id
+    name
+    status
+    lastSeen
+  }
+}
+```
+
+### New Posts
+
+```graphql
+subscription {
+  postCreated {
+    id
+    title
+    author {
+      id
+      name
+    }
+  }
+}
+```
+
+### Filtered Events
+
+```graphql
+subscription OnPostInCategory($categoryId: ID!) {
+  postCreated(categoryId: $categoryId) {
+    id
+    title
+  }
+}
+```
+
+## Cache Integration
+
+Subscriptions rely on cache for operation storage:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Configure cache
+    config.cache = Rails.cache
+    
+    # Cache methods available
+    GraphQL::AppSchema.cached?('key')
+    GraphQL::AppSchema.read_from_cache('key')
+    GraphQL::AppSchema.write_on_cache('key', value)
+    GraphQL::AppSchema.delete_from_cache('key')
+  end
+end
+```
+
+## Best Practices
+
+1. **Use scopes** - Limit updates to relevant subscribers
+2. **Trigger selectively** - Only trigger when data actually changes
+3. **Use trigger_for** - Let Rails extract arguments automatically
+4. **Control broadcasting** - Mark personalized fields as not broadcastable
+5. **Handle unsubscribe** - Clean up resources when clients disconnect
+6. **Monitor subscriptions** - Track active subscriptions and performance
+7. **Use persistent store** - Don't rely on memory store in production
+8. **Secure subscriptions** - Check authorization in subscribed callback

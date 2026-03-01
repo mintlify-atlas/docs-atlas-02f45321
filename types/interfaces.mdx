@@ -1,0 +1,320 @@
+---
+title: Interfaces
+description: Define abstract types that enable polymorphic fields and shared functionality across objects
+---
+
+Interfaces define a set of fields that multiple object types must implement. They enable polymorphic field resolution and are perfect for representing shared characteristics across different object types.
+
+## Basic Interface Definition
+
+Define interfaces in files or inline within your schema:
+
+<CodeGroup>
+```ruby File-based Definition
+# app/graphql/interfaces/person.rb
+module GraphQL
+  class Person < GraphQL::Interface
+    field :email, :string, null: false
+    field :name, :string
+  end
+end
+```
+
+```ruby Schema Definition
+# app/graphql/app_schema.rb
+interface 'Person' do
+  field :email, :string, null: false
+  field :name, :string
+end
+```
+</CodeGroup>
+
+The resulting GraphQL type:
+
+```graphql
+interface Person {
+  email: String!
+  name: String
+}
+```
+
+## Real-World Example
+
+The Star Wars schema demonstrates interfaces for character polymorphism:
+
+```ruby Star Wars Character Interface
+interface 'Character' do
+  desc 'A character in the Star Wars Trilogy'
+  
+  field :id, null: false,
+    desc: 'The id of the character'
+    
+  field :name,
+    desc: 'The name of the character'
+    
+  field :friends, 'Character', array: true,
+    desc: 'The friends of the character, or an empty list if they have none'
+    
+  field :appears_in, 'Episode', array: true,
+    desc: 'Which movies they appear in'
+    
+  field :secret_backstory,
+    desc: 'All secrets about their past'
+end
+```
+
+## Implementing Interfaces
+
+Objects implement interfaces to inherit fields and validation:
+
+### Importing Fields (Default)
+
+By default, interface fields are automatically imported as proxies:
+
+```ruby
+object 'Human' do
+  implements 'Character'
+  # All Character fields are automatically available
+  
+  # Add Human-specific fields
+  field :home_planet, :string
+end
+
+object 'Droid' do
+  implements 'Character'
+  # All Character fields are automatically available
+  
+  # Add Droid-specific fields
+  field :primary_function, :string
+end
+```
+
+<Info>
+Proxy fields delegate resolution to the interface instance, perfect for sharing resolution logic across objects.
+</Info>
+
+### Not Importing Fields
+
+For validation-only interfaces, prevent field import:
+
+```ruby
+# Option 1: Abstract interface
+interface 'Person' do
+  self.abstract = true  # Never instantiated
+  field :email
+end
+
+# Option 2: Per-implementation control
+object 'User' do
+  # Define all fields first
+  field :email
+  field :name
+  
+  # Then declare implementation without importing
+  implements 'Person', import_fields: false
+end
+```
+
+## Type Resolution
+
+Interfaces require type resolution to determine which object type to use for a given value:
+
+### Default Resolution
+
+The default `type_for` method checks each implementing type:
+
+```ruby
+interface 'Character' do
+  # Default implementation:
+  def self.type_for(value, request)
+    all_types&.reverse_each&.find { |t| t.valid_member?(value) }
+  end
+end
+```
+
+### Custom Resolution
+
+Override for specific logic, like ActiveRecord Single Table Inheritance:
+
+```ruby
+interface 'Person' do
+  field :email
+  field :name
+  
+  def self.type_for(value, request)
+    # Use ActiveRecord's type column
+    request.find_type(value.type)
+  end
+end
+```
+
+<Warning>
+Always use `request.find_type` for type lookups - it's cached and respects [namespaces](/guides/advanced/namespaces).
+</Warning>
+
+## Field Validation
+
+When an object implements an interface, all fields are validated for equivalency:
+
+```ruby
+interface 'Character' do
+  field :id, :id, null: false
+  field :name, :string
+end
+
+object 'Human' do
+  implements 'Character'
+  
+  # ✓ Valid: matches interface signature
+  field :id, :id, null: false
+  field :name, :string
+  
+  # ✗ Invalid: different nullability
+  # field :id, :id, null: true  # Would raise ArgumentError
+end
+```
+
+<Note>
+Fields are checked by [equivalency](/guides/advanced/fields#equivalency). Mismatched fields raise an `ArgumentError`.
+</Note>
+
+## Usage in Queries
+
+Use interfaces as field return types with spreads for type-specific fields:
+
+```ruby
+query_fields do
+  field :hero, 'Character' do
+    argument :episode, 'Episode'
+  end
+end
+```
+
+```graphql Query with Spreads
+query {
+  hero(episode: EMPIRE) {
+    __typename
+    id
+    name
+    
+    ... on Human {
+      homePlanet
+    }
+    
+    ... on Droid {
+      primaryFunction
+    }
+  }
+}
+```
+
+```json Response
+{
+  "data": {
+    "hero": {
+      "__typename": "Droid",
+      "id": "2001",
+      "name": "R2-D2",
+      "primaryFunction": "Astromech"
+    }
+  }
+}
+```
+
+## Common Patterns
+
+### Single Table Inheritance
+
+```ruby
+interface 'Person' do
+  self.assigned_to = 'Person'
+  
+  field :id
+  field :email
+  
+  def self.type_for(value, request)
+    request.find_type(value.type)
+  end
+end
+
+object 'User' do
+  self.assigned_to = 'User'
+  implements 'Person'
+end
+
+object 'Admin' do
+  self.assigned_to = 'Admin'
+  implements 'Person'
+  field :role
+end
+```
+
+### Shared Resolution Logic
+
+```ruby
+interface 'Searchable' do
+  field :search_rank, :float
+  
+  def search_rank
+    current_value.calculate_search_score
+  end
+end
+
+object 'Post' do
+  implements 'Searchable'  # Inherits search_rank field and resolution
+end
+
+object 'Comment' do
+  implements 'Searchable'  # Inherits search_rank field and resolution
+end
+```
+
+### Multiple Interfaces
+
+```ruby
+object 'User' do
+  implements 'Person', 'Node', 'Timestamped'
+  # Imports fields from all three interfaces
+end
+```
+
+## Descriptions
+
+Document interfaces for better API understanding:
+
+```ruby
+interface 'Character' do
+  desc 'A character in the Star Wars Trilogy'
+  
+  field :id, null: false,
+    desc: 'The id of the character'
+end
+```
+
+## Best Practices
+
+<Tip>
+Interfaces are ideal for [ActiveRecord Single Table Inheritance](https://edgeapi.rubyonrails.org/classes/ActiveRecord/Inheritance.html). The shared parent model maps perfectly to the interface.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="Use interfaces for" icon="check">
+    - Shared fields across types
+    - Polymorphic associations
+    - Common resolution logic
+    - STI models
+  </Card>
+  
+  <Card title="Use unions instead for" icon="xmark">
+    - Grouping unrelated types
+    - No shared fields
+    - Polymorphic belongs_to
+  </Card>
+</CardGroup>
+
+## Related Documentation
+
+- [Objects](/types/objects) - Implement interfaces
+- [Unions](/types/unions) - Alternative for grouping types
+- [Spreads](/guides/spreads) - Query type-specific fields
+- [Proxy Fields](/guides/advanced/fields#proxies) - Understand field delegation

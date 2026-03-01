@@ -1,0 +1,419 @@
+---
+title: Fields
+description: Define fields with arguments, resolvers, and multiple definition styles
+---
+
+Fields are how you navigate through a GraphQL schema and access data. They appear in objects, interfaces, schemas, and inputs.
+
+## Basic Field Definition
+
+A field consists of a name, type, and optional settings:
+
+```ruby
+field :name, :string
+```
+
+The name should be a symbol in snake_case. The type can be a symbol, string, or class reference.
+
+<Tabs>
+  <Tab title="Basic">
+    ```ruby
+    field :name, :string
+    field :id, :id, null: false
+    field :email, :string
+    ```
+  </Tab>
+  
+  <Tab title="With Options">
+    ```ruby
+    field :name, :string, null: false, desc: 'The user name'
+    field :posts, 'Post', array: true, nullable: false
+    field :age, :int, null: false, default: 0
+    ```
+  </Tab>
+  
+  <Tab title="With Block">
+    ```ruby
+    field(:user, 'User') do
+      desc 'Get a user by ID'
+      argument :id, :id, null: false
+    end
+    ```
+  </Tab>
+</Tabs>
+
+## Field Options
+
+### Type Modifiers
+
+- `null:` (Boolean, default: `true`) - Can the field return null?
+- `array:` (Boolean, default: `false`) - Does the field return an array?
+- `nullable:` (Boolean, default: `true`) - Can array elements be null?
+- `full:` (Boolean, default: `false`) - Shortcut for `null: false, array: true, nullable: false`
+
+```ruby
+field :name, :string, null: false           # String!
+field :tags, :string, array: true           # [String]
+field :tags, :string, full: true            # [String!]!
+field :tags, :string, array: true, null: false, nullable: false  # [String!]!
+```
+
+### Documentation
+
+- `desc:` / `description:` (String) - Field description for introspection
+
+```ruby
+field :email, :string, desc: 'User email address'
+
+field(:user, 'User') do
+  desc 'Find a user by ID'
+end
+```
+
+### Behavior Control
+
+- `enabled:` (Boolean) - Is the field available?
+- `disabled:` (Boolean) - Is the field unavailable?
+- `deprecated:` (Boolean/String) - Mark as deprecated with optional reason
+
+```ruby
+field :old_name, :string, disabled: true
+field :legacy_field, :string, deprecated: 'Use newField instead'
+```
+
+### Resolving
+
+- `method_name:` (Symbol) - Method name for resolving the field
+
+```ruby
+field :full_name, :string, method_name: :name
+field :user_email, :string, method_name: :email
+```
+
+## Three Ways to Define Fields
+
+Rails GraphQL supports three different approaches to defining fields:
+
+### 1. Inline Definition
+
+Define fields directly in the type:
+
+```ruby app/graphql/objects/user.rb
+module GraphQL
+  class User < GraphQL::Object
+    field :id, :id, null: false
+    field :name, :string
+    field :email, :string
+    
+    field(:posts, 'Post', array: true) do
+      argument :limit, :int, default: 10
+    end
+  end
+end
+```
+
+### 2. Chained Definition
+
+Chain configuration methods for simple fields:
+
+```ruby app/graphql/objects/user.rb
+module GraphQL
+  class User < GraphQL::Object
+    field(:posts, 'Post', array: true)
+      .argument(:limit, :int, default: 10)
+      .argument(:offset, :int, default: 0)
+      .use(:deprecated, reason: 'Use paginatedPosts instead')
+  end
+end
+```
+
+### 3. Standalone Definition
+
+Define fields as separate classes:
+
+```ruby app/graphql/queries/user_query.rb
+module GraphQL
+  module Queries
+    class UserQuery < GraphQL::Query
+      desc 'Find a user by ID'
+      
+      argument :id, :id, null: false
+      
+      def resolve(id:)
+        User.find(id)
+      end
+    end
+  end
+end
+```
+
+Then import into your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    import_into :query, Queries::UserQuery
+  end
+end
+```
+
+<Note>
+  Standalone fields default to using the `resolve` method instead of matching the field name.
+</Note>
+
+## Arguments
+
+Output fields can accept arguments:
+
+<Tabs>
+  <Tab title="Inline Arguments">
+    ```ruby
+    field :user, 'User',
+      arguments: argument(:id, :id, null: false)
+    
+    field :users, 'User', array: true,
+      arguments: argument(:limit, :int) + argument(:offset, :int)
+    ```
+  </Tab>
+  
+  <Tab title="Block Arguments">
+    ```ruby
+    field(:user, 'User') do
+      argument :id, :id, null: false
+    end
+    
+    field(:users, 'User', array: true) do
+      argument :limit, :int, default: 10
+      argument :offset, :int, default: 0
+      argument :filter, 'UserFilter'
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Helper Arguments">
+    ```ruby
+    # id_argument is a shortcut
+    field :user, 'User', arguments: id_argument
+    
+    # Equivalent to:
+    field :user, 'User', arguments: argument(:id, :id, null: false)
+    
+    # Customize id_argument
+    field :user, 'User', arguments: id_argument(:user_id, desc: 'User ID')
+    ```
+  </Tab>
+</Tabs>
+
+## Resolving Fields
+
+Fields are resolved by finding a method on the parent object:
+
+```ruby app/graphql/objects/user.rb
+module GraphQL
+  class User < GraphQL::Object
+    field :id, :id, null: false
+    field :full_name, :string, method_name: :name
+    
+    # Resolver method
+    def full_name
+      "#{object.first_name} #{object.last_name}"
+    end
+  end
+end
+```
+
+The resolution process:
+
+1. Check for `method_name` option
+2. Check for method matching field name
+3. For standalone fields, use `resolve` method
+4. Call method on the source object
+
+### Resolver Methods
+
+Resolver methods have access to:
+
+```ruby
+def field_name(arguments_hash)
+  object     # The source object being resolved
+  request    # The current GraphQL request
+  context    # Request context (current_user, etc.)
+end
+```
+
+## Input Fields
+
+Input fields are simpler and only appear in Input types:
+
+```ruby app/graphql/inputs/user_input.rb
+module GraphQL
+  class UserInput < GraphQL::Input
+    field :name, :string, null: false
+    field :email, :string, null: false
+    field :role, 'Role', default: 'USER'
+    field :age, :int, default: 18
+  end
+end
+```
+
+Input field options:
+- `null:` - Can the field be null?
+- `array:` / `nullable:` - Array modifiers
+- `default:` - Default value if not provided
+- `desc:` - Field description
+
+<Warning>
+  Input field defaults are used when the field is not provided OR when the value is explicitly `null`.
+</Warning>
+
+## Output Fields
+
+Output fields appear in Objects, Interfaces, and Schemas:
+
+```ruby app/graphql/objects/post.rb
+module GraphQL
+  class Post < GraphQL::Object
+    field :id, :id, null: false
+    field :title, :string, null: false
+    field :body, :string
+    field :author, 'User', null: false
+    field :comments, 'Comment', array: true
+  end
+end
+```
+
+## Mutation Fields
+
+Mutation fields have a special `perform` step:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    mutation_fields do
+      field(:create_user, 'User') do
+        argument :name, :string, null: false
+        argument :email, :string, null: false
+        
+        perform do |name:, email:|
+          User.create!(name: name, email: email)
+        end
+      end
+    end
+  end
+end
+```
+
+Alternatively, use the `call` option:
+
+```ruby
+field(:create_user, 'User', call: :perform_create) do
+  argument :name, :string, null: false
+end
+
+def perform_create(name:)
+  User.create!(name: name)
+end
+```
+
+## Subscription Fields
+
+Subscription fields support real-time updates:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    subscription_fields do
+      field(:user_updated, 'User') do
+        argument :id, :id, null: false
+        
+        scope :current_user
+        
+        subscribed do
+          puts "Subscription created: #{subscription.id}"
+        end
+      end
+    end
+  end
+end
+```
+
+## Directives on Fields
+
+Add directives to fields:
+
+```ruby
+field :legacy_name, :string, directives: GraphQL::DeprecatedDirective.new
+
+field(:name, :string) do
+  use :deprecated, reason: 'Use fullName instead'
+end
+
+# Shortcut for @deprecated
+field :old_field, :string, deprecated: 'No longer supported'
+```
+
+## Changing Fields
+
+Modify existing field definitions:
+
+```ruby app/graphql/objects/cat.rb
+module GraphQL
+  class Cat < GraphQL::Object
+    implements 'Animal'
+    
+    # Change inherited field
+    change_field :name, desc: 'The name of the cat'
+    
+    change_field(:age, null: false) do
+      argument :in_cat_years, :bool, default: false
+    end
+  end
+end
+```
+
+You can change:
+- `null`, `nullable`, `disabled`, `enabled`
+- `description`, `default`, `method_name`
+- Add `arguments` and `directives` in a block
+
+## Field Events
+
+Output fields support events during request processing:
+
+```ruby
+field(:user, 'User') do
+  on(:prepare) do |event|
+    puts "Preparing to resolve field"
+  end
+  
+  on(:finalize) do |event|
+    puts "Field resolved with value: #{event.value}"
+  end
+end
+```
+
+## Field Inspection
+
+Fields provide inspection methods:
+
+```ruby
+field = GraphQL::User[:name]
+
+field.name          # :name
+field.gql_name      # "name"
+field.null?         # true/false
+field.array?        # true/false
+field.nullable?     # true/false
+field.enabled?      # true/false
+field.disabled?     # true/false
+field.internal?     # Starts with __?
+field.method_name   # :name or custom method
+```
+
+## Best Practices
+
+1. **Always specify null** - Be explicit about whether fields can be null
+2. **Document with desc** - Add descriptions for API documentation
+3. **Use method_name** - Resolve from different method names when needed
+4. **Organize mutations** - Use standalone definitions for complex mutations
+5. **Validate inputs** - Use Input types for complex arguments

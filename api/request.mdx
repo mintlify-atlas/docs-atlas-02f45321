@@ -1,0 +1,799 @@
+---
+title: Request
+description: GraphQL Request class for executing queries, mutations, and subscriptions with context and error handling
+---
+
+## Overview
+
+The `Rails::GraphQL::Request` class processes GraphQL operations including queries, mutations, and subscriptions. It handles document parsing, validation, execution, and response formatting.
+
+**Namespace:** `Rails::GraphQL`
+
+**Extends:** `ActiveSupport::Autoload`
+
+---
+
+## Constructor
+
+### initialize
+
+<ParamField path="schema" type="Schema">
+  The schema to execute against
+</ParamField>
+
+<ParamField path="namespace" type="Symbol" default=":base">
+  The namespace to use if schema not provided
+</ParamField>
+
+```ruby
+request = Rails::GraphQL::Request.new(schema)
+# or
+request = Rails::GraphQL::Request.new(namespace: :api)
+```
+
+---
+
+## Class Methods
+
+### execute
+
+Shortcut to initialize, set context, and execute a request.
+
+<ParamField path="document" type="String" required>
+  The GraphQL query document
+</ParamField>
+
+<ParamField path="schema" type="Schema">
+  The schema to execute against
+</ParamField>
+
+<ParamField path="namespace" type="Symbol" default=":base">
+  Namespace if schema not provided
+</ParamField>
+
+<ParamField path="context" type="Hash" default="{}">
+  Context data available during execution
+</ParamField>
+
+<ParamField path="variables" type="Hash">
+  Query variables
+</ParamField>
+
+<ParamField path="args" type="Hash">
+  Alias for variables
+</ParamField>
+
+<ParamField path="operation_name" type="String">
+  Name of operation to execute (if document has multiple)
+</ParamField>
+
+<ParamField path="as" type="Symbol" default=":string">
+  Response format (`:string`, `:hash`, `:json`, `:object`)
+</ParamField>
+
+**Returns:** Formatted response
+
+```ruby
+result = Rails::GraphQL::Request.execute(
+  query,
+  schema: ApiSchema,
+  variables: { id: 1 },
+  context: { current_user: user }
+)
+```
+
+**Alias:** `perform`
+
+---
+
+### compile
+
+Compile a GraphQL document to cached format.
+
+<ParamField path="document" type="String" required>
+  The GraphQL query document
+</ParamField>
+
+<ParamField path="schema" type="Schema">
+  The schema to compile against
+</ParamField>
+
+<ParamField path="namespace" type="Symbol" default=":base">
+  Namespace if schema not provided
+</ParamField>
+
+<ParamField path="compress" type="Boolean" default="true">
+  Whether to compress the compiled output
+</ParamField>
+
+**Returns:** `String` - Serialized compiled document
+
+```ruby
+compiled = Rails::GraphQL::Request.compile(query, schema: ApiSchema)
+```
+
+---
+
+### valid?
+
+Validate a GraphQL document.
+
+<ParamField path="document" type="String" required>
+  The GraphQL query document
+</ParamField>
+
+<ParamField path="schema" type="Schema">
+  The schema to validate against
+</ParamField>
+
+<ParamField path="namespace" type="Symbol" default=":base">
+  Namespace if schema not provided
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+if Rails::GraphQL::Request.valid?(query, schema: ApiSchema)
+  # Execute query
+end
+```
+
+---
+
+## Instance Attributes
+
+<ResponseField name="args" type="OpenStruct">
+  Query variables/arguments
+</ResponseField>
+
+<ResponseField name="origin" type="Controller | Channel">
+  The controller or channel that originated the request
+</ResponseField>
+
+<ResponseField name="errors" type="Errors">
+  Collection of errors encountered during execution
+</ResponseField>
+
+<ResponseField name="fragments" type="Hash">
+  Named fragments defined in the document
+</ResponseField>
+
+<ResponseField name="operations" type="Hash">
+  Operations defined in the document
+</ResponseField>
+
+<ResponseField name="response" type="Object">
+  The response collector object
+</ResponseField>
+
+<ResponseField name="schema" type="Schema">
+  The schema being executed
+</ResponseField>
+
+<ResponseField name="stack" type="Array">
+  Execution stack for error reporting
+</ResponseField>
+
+<ResponseField name="strategy" type="Strategy">
+  Execution strategy (Query, Mutation, Subscription)
+</ResponseField>
+
+<ResponseField name="document" type="Token">
+  Parsed document token
+</ResponseField>
+
+<ResponseField name="operation_name" type="String">
+  Name of the operation being executed
+</ResponseField>
+
+<ResponseField name="subscriptions" type="Hash">
+  Active subscriptions created during execution
+</ResponseField>
+
+**Aliases:**
+- `arguments` → `args`
+- `controller` → `origin`
+- `channel` → `origin`
+
+---
+
+## Instance Methods
+
+### execute
+
+Execute a GraphQL document.
+
+<ParamField path="document" type="String" required>
+  The GraphQL query document
+</ParamField>
+
+<ParamField path="as" type="Symbol">
+  Response format (`:string`, `:hash`, `:json`, `:object`)
+</ParamField>
+
+<ParamField path="variables" type="Hash">
+  Query variables
+</ParamField>
+
+<ParamField path="args" type="Hash">
+  Alias for variables
+</ParamField>
+
+<ParamField path="operation_name" type="String">
+  Operation name to execute
+</ParamField>
+
+<ParamField path="origin" type="Controller | Channel">
+  Originating controller or channel
+</ParamField>
+
+<ParamField path="compiled" type="Boolean" default="false">
+  Whether document is pre-compiled
+</ParamField>
+
+<ParamField path="hash" type="String">
+  Cache key for storing/retrieving compiled document
+</ParamField>
+
+<ParamField path="data_for" type="Hash">
+  Prepared data for specific fields
+</ParamField>
+
+**Returns:** Formatted response
+
+```ruby
+request = Rails::GraphQL::Request.new(schema)
+result = request.execute(
+  query,
+  variables: { id: 1 },
+  as: :json
+)
+```
+
+**Alias:** `perform`
+
+---
+
+### compile
+
+Compile a document for caching.
+
+<ParamField path="document" type="String" required>
+  The GraphQL query document
+</ParamField>
+
+<ParamField path="compress" type="Boolean" default="true">
+  Whether to compress the output
+</ParamField>
+
+**Returns:** `String` - Serialized compiled document
+
+```ruby
+request = Rails::GraphQL::Request.new(schema)
+compiled = request.compile(query)
+```
+
+---
+
+### valid?
+
+Check if a document is valid.
+
+<ParamField path="document" type="String" required>
+  The GraphQL query document
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+request = Rails::GraphQL::Request.new(schema)
+if request.valid?(query)
+  request.execute(query)
+end
+```
+
+---
+
+## Context Management
+
+### context
+
+Get the request context.
+
+**Returns:** `OpenStruct` (frozen)
+
+```ruby
+request.context.current_user
+```
+
+---
+
+### context=
+
+Set the request context.
+
+<ParamField path="data" type="Hash" required>
+  Context data
+</ParamField>
+
+```ruby
+request.context = { current_user: user, locale: 'en' }
+```
+
+---
+
+### extensions
+
+Get the extensions hash for adding metadata to response.
+
+**Returns:** `Hash`
+
+```ruby
+request.extensions[:timing] = { started_at: Time.current }
+```
+
+---
+
+## Prepared Data
+
+### prepare_data_for
+
+Prepare data for a specific field to avoid N+1 queries.
+
+<ParamField path="field" type="Field | String" required>
+  The field to prepare data for
+</ParamField>
+
+<ParamField path="value" type="Any" required>
+  The prepared data
+</ParamField>
+
+<ParamField path="options" type="Hash">
+  Additional options
+</ParamField>
+
+```ruby
+request.prepare_data_for(:posts, Post.all.to_a)
+```
+
+---
+
+### import_prepared_data
+
+Import multiple prepared data entries.
+
+<ParamField path="prepared_data" type="Hash" required>
+  Hash of field names/objects to prepared data
+</ParamField>
+
+```ruby
+request.import_prepared_data(
+  posts: Post.all.to_a,
+  users: User.all.to_a
+)
+```
+
+---
+
+### prepared_data_for
+
+Retrieve prepared data for a field.
+
+<ParamField path="field" type="Field" required>
+  The field to get data for
+</ParamField>
+
+**Returns:** Prepared data or `nil`
+
+```ruby
+data = request.prepared_data_for(field)
+```
+
+---
+
+### prepared_data_for?
+
+Check if prepared data exists for a field.
+
+<ParamField path="field" type="Field" required>
+  The field to check
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+if request.prepared_data_for?(field)
+  # Use prepared data
+end
+```
+
+---
+
+## Error Reporting
+
+### report_error
+
+Report an error with the current execution context.
+
+<ParamField path="message" type="String" required>
+  Error message
+</ParamField>
+
+<ParamField path="path" type="Array">
+  Path to the field (auto-generated from stack if not provided)
+</ParamField>
+
+<ParamField path="locations" type="Array">
+  Source locations
+</ParamField>
+
+<ParamField path="extensions" type="Hash">
+  Additional error metadata
+</ParamField>
+
+**Returns:** `nil`
+
+```ruby
+request.report_error('User not found', extensions: { code: 'NOT_FOUND' })
+```
+
+---
+
+### report_node_error
+
+Report an error on a specific AST node.
+
+<ParamField path="message" type="String" required>
+  Error message
+</ParamField>
+
+<ParamField path="node" type="Token" required>
+  AST node where error occurred
+</ParamField>
+
+<ParamField path="extensions" type="Hash">
+  Additional error metadata
+</ParamField>
+
+```ruby
+request.report_node_error('Invalid argument', node)
+```
+
+---
+
+### exception_to_error
+
+Convert an exception to a GraphQL error.
+
+<ParamField path="exception" type="Exception" required>
+  The exception to convert
+</ParamField>
+
+<ParamField path="node" type="Token" required>
+  AST node where exception occurred
+</ParamField>
+
+<ParamField path="message" type="String">
+  Custom error message (defaults to exception message)
+</ParamField>
+
+```ruby
+request.exception_to_error(error, node, message: 'Failed to resolve field')
+```
+
+---
+
+### rescue_with_handler
+
+Use schema handlers for caught exceptions.
+
+<ParamField path="exception" type="Exception" required>
+  The exception to handle
+</ParamField>
+
+<ParamField path="extra" type="Hash">
+  Additional context data
+</ParamField>
+
+```ruby
+request.rescue_with_handler(exception, field: current_field)
+```
+
+---
+
+### location_of
+
+Get the source location of an AST node.
+
+<ParamField path="node" type="Token | Component" required>
+  The node to get location for
+</ParamField>
+
+**Returns:** `Array<Hash>` - Start and end locations
+
+```ruby
+location = request.location_of(node)
+# => [{ "line" => 1, "column" => 5 }, { "line" => 1, "column" => 15 }]
+```
+
+---
+
+## Cache Management
+
+### cache
+
+Get or initialize a cache entry.
+
+<ParamField path="key" type="Any" required>
+  Cache key
+</ParamField>
+
+<ParamField path="init_value" type="Any">
+  Initial value if not present
+</ParamField>
+
+<ParamField path="block" type="Block">
+  Block to compute initial value
+</ParamField>
+
+**Returns:** Cached value
+
+```ruby
+request.cache(:user_loader) { UserLoader.new }
+```
+
+---
+
+### nested_cache
+
+Get or initialize a nested cache entry.
+
+<ParamField path="key" type="Any" required>
+  Outer cache key
+</ParamField>
+
+<ParamField path="sub_key" type="Any" required>
+  Inner cache key
+</ParamField>
+
+<ParamField path="block" type="Block" required>
+  Block to compute value if not present
+</ParamField>
+
+**Returns:** Cached value
+
+```ruby
+value = request.nested_cache(:loaders, :user) { UserLoader.new }
+```
+
+---
+
+### valid_cache?
+
+Check if the cached operation is still valid.
+
+**Returns:** `Boolean`
+
+```ruby
+request.valid_cache? # => true
+```
+
+---
+
+## Stack Management
+
+### stacked
+
+Execute a block with an object added to the execution stack.
+
+<ParamField path="object" type="Any" required>
+  Object to add to stack
+</ParamField>
+
+<ParamField path="block" type="Block" required>
+  Block to execute
+</ParamField>
+
+```ruby
+request.stacked(field) do
+  # Field is now on the stack for error reporting
+  resolve_field
+end
+```
+
+---
+
+### stack_to_path
+
+Convert the current execution stack to an error path.
+
+**Returns:** `Array`
+
+```ruby
+request.stack_to_path # => ["user", "posts", 0, "title"]
+```
+
+---
+
+## Type Resolution
+
+### find_type!
+
+Find a type in the schema.
+
+<ParamField path="type" type="Symbol | String" required>
+  Type name
+</ParamField>
+
+**Returns:** Type class
+
+**Raises:** Exception if not found
+
+**Alias:** `find_type`
+
+```ruby
+user_type = request.find_type!(:User)
+```
+
+---
+
+## Subscriptions
+
+### subscriptions?
+
+Check if any subscriptions were added during execution.
+
+**Returns:** `Boolean`
+
+```ruby
+request.subscriptions? # => true
+```
+
+---
+
+## Query Helpers
+
+### action_name
+
+Get the action name from the origin controller.
+
+**Returns:** `String` or `nil`
+
+```ruby
+request.action_name # => "graphql"
+```
+
+---
+
+## Response Formats
+
+<Expandable title="Available Response Formats">
+
+<ResponseField name=":string" type="String">
+  JSON string representation (default)
+</ResponseField>
+
+<ResponseField name=":hash" type="Hash">
+  Ruby hash representation
+</ResponseField>
+
+<ResponseField name=":json" type="Hash">
+  Alias for `:hash`
+</ResponseField>
+
+<ResponseField name=":object" type="Hash">
+  Alias for `:hash`
+</ResponseField>
+
+</Expandable>
+
+---
+
+## Example Usage
+
+### Basic Query Execution
+
+```ruby
+query = <<~GRAPHQL
+  query GetUser($id: ID!) {
+    user(id: $id) {
+      id
+      name
+      email
+    }
+  }
+GRAPHQL
+
+result = Rails::GraphQL::Request.execute(
+  query,
+  schema: ApiSchema,
+  variables: { id: '123' },
+  context: { current_user: current_user }
+)
+
+puts result
+# => {"data":{"user":{"id":"123","name":"John Doe","email":"john@example.com"}}}
+```
+
+---
+
+### With Prepared Data (N+1 Prevention)
+
+```ruby
+request = Rails::GraphQL::Request.new(ApiSchema)
+request.context = { current_user: user }
+
+# Prepare data to avoid N+1 queries
+users = User.includes(:posts).all
+request.prepare_data_for(:users, users)
+
+result = request.execute(query, as: :hash)
+```
+
+---
+
+### Compiled Query Execution
+
+```ruby
+# Compile once
+compiled = Rails::GraphQL::Request.compile(query, schema: ApiSchema)
+
+# Store in cache
+Rails.cache.write("query:#{query_hash}", compiled)
+
+# Execute many times
+compiled = Rails.cache.read("query:#{query_hash}")
+result = Rails::GraphQL::Request.execute(
+  compiled,
+  schema: ApiSchema,
+  compiled: true,
+  variables: { id: '123' }
+)
+```
+
+---
+
+### Error Handling
+
+```ruby
+class ApiSchema < Rails::GraphQL::Schema
+  rescue_from(ActiveRecord::RecordNotFound) do |error|
+    report_error(
+      'Record not found',
+      extensions: { code: 'NOT_FOUND' }
+    )
+  end
+
+  rescue_from(ActiveRecord::RecordInvalid) do |error|
+    report_error(
+      error.record.errors.full_messages.join(', '),
+      extensions: { code: 'VALIDATION_ERROR' }
+    )
+  end
+end
+```
+
+---
+
+### Custom Context
+
+```ruby
+request = Rails::GraphQL::Request.new(ApiSchema)
+request.context = {
+  current_user: current_user,
+  ip_address: request.remote_ip,
+  locale: I18n.locale,
+  abilities: current_user.abilities
+}
+
+result = request.execute(query)
+
+# Access in resolvers
+class Query < Rails::GraphQL::Type::Object
+  field :current_user, :User do
+    def resolve
+      request.context.current_user
+    end
+  end
+end
+```

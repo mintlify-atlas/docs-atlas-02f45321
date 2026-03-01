@@ -1,0 +1,363 @@
+---
+title: 'Field Lists'
+description: 'Learn how to work with collections of fields in Rails GraphQL, including adding, modifying, and managing field lists'
+---
+
+Field lists are found in classes containing fields: [Interfaces](/guides/interfaces), [Inputs](/guides/inputs), [Objects](/guides/objects), [Sets](/guides/alternatives#set-definition), [Schemas](/guides/schemas), and [Sources](/guides/sources).
+
+You can use the same methods in both single and multi-schema-based scenarios. Multi-schema-based lists require specifying the type, but when using a block focused on a specific schema type, you can treat it as a single list.
+
+```ruby
+# Single list of fields
+disable_fields(:field1, :field2)
+
+# Multi-schema-based list of fields
+disable_fields(:query, :field1, :field2)
+
+# Using a block with multi-schema-based list
+query_fields do
+  disable_fields(:field1, :field2)
+end
+```
+
+<Note>
+When methods differ between single and multi forms, they're listed as `single` / `multi`.
+</Note>
+
+## Accessing the List
+
+### fields / fields_for
+
+`fields(initialize = nil)` / `fields_for(type, initialize = nil)`
+
+Returns the list of fields as a [Concurrent::Map](https://ruby-concurrency.github.io/concurrent-ruby/1.1.5/Concurrent/Map.html) with sanitized names as keys and fields as values. The list is only initialized when explicitly requested.
+
+```ruby
+# Single form
+fields                       # May return nil
+fields(true)                 # Always returns a Concurrent::Map
+
+# Multi form
+fields_for(:query)           # May return nil
+fields_for(:query, true)     # Always returns a Concurrent::Map
+```
+
+### fields? / fields_for?
+
+`fields?` / `fields_for?(type)`
+
+Check if the list of fields has been initialized and has items.
+
+```ruby
+# Single form
+fields?
+
+# Multi form
+fields_for?(:query)
+```
+
+## Adding Fields
+
+### Regular Fields
+
+`field(name, type, **settings, &configure_block)` / `add_field(type, name, type, **settings, &configure_block)`
+
+Add a field to the list. Fields must have unique names. Duplicate names raise a `DuplicatedError`.
+
+```ruby
+# Single form
+field(:name, :string)
+
+# Multi form
+add_field(:query, :name, :string)
+```
+
+Read more about [fields](/guides/fields).
+
+### Safe Fields
+
+`safe_field(name, type, **settings, &configure_block)` / `safe_add_field(type, name, type, **settings, &configure_block)`
+
+Works like regular field addition, but exceptions are already rescued. Best used with [Sources](/guides/sources).
+
+```ruby
+# Single form
+safe_field(:name, :string)
+
+# Multi form
+safe_add_field(:query, :name, :string)
+```
+
+### Proxy Fields
+
+`proxy_field(field, alias = nil, **settings, &configure_block)` / `add_proxy_field(type, field, alias = nil, **settings, &configure_block)`
+
+Add a field that proxies to another field. This checks name uniqueness and field compatibility.
+
+```ruby
+# Single form
+proxy_field(GraphQL::User[:name])
+
+# With a different name
+proxy_field(GraphQL::User[:name], :user_name)
+# OR
+proxy_field(GraphQL::User[:name], as: :user_name)
+# OR
+proxy_field(GraphQL::User[:name], alias: :user_name)
+
+# Multi form
+add_proxy_field(:query, GraphQL::User[:name])
+```
+
+<Info>
+Proxy fields is an advanced feature. Read more about [proxy fields](/guides/advanced/fields#proxies).
+</Info>
+
+## Importing Fields
+
+### From Class
+
+`import(source)` / `import_into(type, source)`
+
+Import fields from a source into the list as proxies. The source can be an Array, Hash-like object, another object with fields, a [Set Alternative](/guides/alternatives#set-definition), or a [Standalone Alternative](/guides/alternatives#standalone-definition).
+
+```ruby
+# Single form
+import(GraphQL::WithName)
+
+# Multi form
+import_into(:query, GraphQL::Queries::Users)
+```
+
+### From Module
+
+`import_all(module, recursive: false)` / `import_all_into(type, module, recursive: false)`
+
+Import multiple field classes from a module. For every constant found, it calls the import method for classes or recurses for modules when `recursive: true`.
+
+```ruby
+# Single form
+import_all(GraphQL::UserFields)
+
+# Multi form
+import_all_into(:query, GraphQL::Queries)
+```
+
+The multi-schema form has syntax sugar when the module name indicates the type:
+
+```ruby
+# Multi form - automatic type detection
+import_all(GraphQL::Queries)
+```
+
+## Modifying Fields
+
+### change_field / overwrite_field
+
+`change_field(name, **changes, &configure_block)`
+
+Modify aspects of your fields, with optional block for additional changes.
+
+```ruby
+# Single form
+change_field(:name, null: true)
+
+# With a block
+change_field(:name, null: true) do
+  argument(:first, :bool, null: false, default: true)
+end
+
+# Using the alias
+overwrite_field(:name, null: true)
+
+# Multi form
+change_field(:query, :name, null: true)
+```
+
+### configure_field
+
+`configure_field(name, &configure_block)`
+
+Go straight to the configuration block. Use this when changes only involve adding arguments or directives.
+
+```ruby
+# Single form
+configure_field(:name) do
+  argument(:first, :bool, null: false, default: true)
+end
+
+# Multi form
+configure_field(:query, :name) do
+  argument(:first, :bool, null: false, default: true)
+end
+```
+
+### disable_fields / enable_fields
+
+`disable_fields(name, *names)` / `enable_fields(name, *names)`
+
+Quick shortcuts to change the `enabled` status of fields.
+
+```ruby
+# Single form
+disable_fields(:field1, :field2)
+enable_fields(:field1, :field2)
+
+# Multi form
+disable_fields(:query, :field1, :field2)
+enable_fields(:query, :field1, :field2)
+```
+
+Read more about [changing fields](/guides/fields#changing-fields).
+
+## Searching Fields
+
+### has_field?
+
+`has_field?(by)`
+
+Check if the list has a field. Accepts the name as a symbol, the GQL name as a string, or another field.
+
+```ruby
+# Single form
+has_field?(:first_name)
+has_field?('firstName')
+
+# Multi form
+has_field?(:query, :first_name)
+has_field?(:query, 'firstName')
+```
+
+### find_field / []
+
+`find_field(by)` or `[by]`
+
+Find and return a field. Accepts the name as a symbol, the GQL name as a string, or another field.
+
+```ruby
+# Single form
+find_field(:first_name)
+find_field('firstName')
+
+# OR
+self[:first_name]
+self['firstName']
+
+# Multi form
+find_field(:query, :first_name)
+find_field(:query, 'firstName')
+
+# OR
+self[:query, :first_name]
+self[:query, 'firstName']
+```
+
+### find_field!
+
+`find_field!(by)`
+
+Same as `find_field`, but raises `NotFoundError` if the field is not found.
+
+```ruby
+# Single form
+find_field!(:first_name)
+find_field!('firstName')
+
+# Multi form
+find_field!(:query, :first_name)
+find_field!(:query, 'firstName')
+```
+
+## Utility Methods
+
+### field_names / field_names_for
+
+`field_names(enabled_only = true)` / `field_names_for(type, enabled_only = true)`
+
+Get all GQL names of fields in the list. By default, returns only enabled fields.
+
+```ruby
+# Single form
+field_names                       # => ['fieldOne']
+field_names(false)                # => ['fieldOne', 'disabledFieldTwo']
+
+# Multi form
+field_names_for(:query)           # => ['fieldOne']
+field_names_for(:query, false)    # => ['fieldOne', 'disabledFieldTwo']
+```
+
+Read more about [names](/guides/names).
+
+### enabled_fields / enabled_fields_from
+
+`enabled_fields` / `enabled_fields_from(type)`
+
+Returns an [Enumerator::Lazy](https://ruby-doc.org/core-3.0.0/Enumerator/Lazy.html) of all enabled fields for performance.
+
+```ruby
+# Single form
+enabled_fields.each { |field| puts field.gql_name }
+
+# Multi form
+enabled_fields_from(:query).each { |field| puts field.gql_name }
+```
+
+## Multi-Schema Shortcuts
+
+The multi-schema-based list provides type-specific methods as syntax sugar.
+
+### Type-Specific Accessors
+
+`{type}_fields`
+
+Access the list of fields for a specific type. Supports a block for exclusive interaction. Does not initialize the list on its own.
+
+```ruby
+# Accessing
+query_fields
+mutation_fields
+subscription_fields
+
+# Interacting with block
+query_fields { field(:name, :string) }
+mutation_fields { field(:create_user, 'User') }
+subscription_fields { field(:user_updated, 'User') }
+```
+
+### Type-Specific Helpers
+
+```ruby
+# Checking
+query_fields?
+mutation_fields?
+subscription_fields?
+
+# Adding fields
+add_query_field(:name, :string)
+add_mutation_field(:create_user, 'User')
+add_subscription_field(:user_updated, 'User')
+
+# Checking for a field
+query_field?(:name)
+mutation_field?(:create_user)
+subscription_field?(:user_updated)
+
+# Finding a field
+query_field(:name)
+mutation_field(:create_user)
+subscription_field(:user_updated)
+```
+
+### Type Names and Objects
+
+```ruby
+# Get the GraphQL type name
+query_type_name            # => '_Query'
+mutation_type_name         # => '_Mutation'
+subscription_type_name     # => '_Subscription'
+
+# Get the type object (returns OpenStruct)
+query_type
+mutation_type
+subscription_type
+```

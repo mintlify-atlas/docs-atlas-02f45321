@@ -1,0 +1,339 @@
+---
+title: TypeMap
+description: Registry for GraphQL types, directives, and schemas with namespace support and lazy loading capabilities
+---
+
+## Overview
+
+The `TypeMap` is Rails GraphQL's central registry for all GraphQL types, directives, and schemas. Inspired by `ActiveRecord::Type::TypeMap`, it stores items with their unique names, basic settings, and indexes them for easy retrieval.
+
+Items are stored as procs so aliases can fetch the base object even if it changes later.
+
+## Cache Structure
+
+```
+Namespace -> BaseClass -> ItemKey -> Item
+```
+
+## Base Classes
+
+The TypeMap manages three base classes:
+
+- `:Type` - All GraphQL types (scalars, objects, interfaces, unions, enums, inputs)
+- `:Directive` - GraphQL directives
+- `:Schema` - GraphQL schemas
+
+## Instance Methods
+
+### version
+
+```ruby
+type_map.version
+# => "a1b2c3d4"
+```
+
+Get the current version of the TypeMap. On each reset, the version changes and can be used to invalidate cache. Uses the first 8 characters of `GraphQL.config.version` or generates a random hex.
+
+### reset!
+
+```ruby
+type_map.reset!
+```
+
+Reset the state of the type mapper. Clears all registered objects, pending registrations, callbacks, and dependencies. Called automatically during initialization.
+
+### register
+
+```ruby
+type_map.register(UserType)
+```
+
+<ParamField path="object" type="Class" required>
+  A class where the namespaces and base class can be inferred. Must include `Helpers::Registerable`.
+</ParamField>
+
+Register a given object. The object is indexed by:
+- Its base namespace and key
+- Its name
+- All aliases
+- Additional namespaces (if any)
+
+Returns the registered object.
+
+### unregister
+
+```ruby
+type_map.unregister(UserType, PostType)
+```
+
+<ParamField path="objects" type="Class" required>
+  One or more objects to unregister.
+</ParamField>
+
+Unregister the provided objects by assigning nil to their final value in the index.
+
+### register_alias
+
+```ruby
+type_map.register_alias('User', 'Person', base_class: :Type, namespace: :v2)
+type_map.register_alias('CustomDate', base_class: :Type) { DateScalar }
+```
+
+<ParamField path="name_or_key" type="String | Symbol" required>
+  The alias name or key to register.
+</ParamField>
+
+<ParamField path="key" type="String | Symbol">
+  The key from the same namespace and base class to alias. Mutually exclusive with block.
+</ParamField>
+
+<ParamField path="base_class" type="Symbol" default=":Type">
+  The base class for the alias (`:Type`, `:Directive`, or `:Schema`).
+</ParamField>
+
+<ParamField path="namespace" type="Symbol | Array<Symbol>">
+  Namespace(s) where the alias should be registered.
+</ParamField>
+
+Register an item alias. Provide either a key from the same namespace/base class, or a block that returns the item.
+
+### fetch
+
+```ruby
+type_map.fetch('User', base_class: :Type, namespace: :v2)
+type_map.fetch(:string_scalar, fallback: :String)
+```
+
+<ParamField path="key_or_name" type="String | Symbol | Array" required>
+  The key or name to find. Can be an array of possibilities.
+</ParamField>
+
+<ParamField path="base_class" type="Symbol" default=":Type">
+  The base class to search within.
+</ParamField>
+
+<ParamField path="namespace" type="Symbol | Array<Symbol>">
+  Namespace(s) to search. Automatically includes `:base` unless `exclusive: true`.
+</ParamField>
+
+<ParamField path="exclusive" type="Boolean" default="false">
+  If true, only search the specified namespace(s), not `:base`.
+</ParamField>
+
+<ParamField path="fallback" type="String | Symbol">
+  Alternative key/name to try if the primary one isn't found.
+</ParamField>
+
+<ParamField path="prevent_register" type="Boolean | Array">
+  Prevent registration of pending items during fetch. Can specify specific items to skip.
+</ParamField>
+
+Find the given key or name inside the base class either in the given namespace or the `:base` namespace. Returns `nil` if not found.
+
+### fetch!
+
+```ruby
+type_map.fetch!('User', base_class: :Type)
+# => UserType
+
+type_map.fetch!('NonExistent')
+# => Rails::GraphQL::NotFoundError: Unable to find "NonExistent" Type object.
+```
+
+Same as `fetch` but raises `NotFoundError` if the item isn't found. Will attempt to load dependencies and retry before failing.
+
+### exist?
+
+```ruby
+type_map.exist?('User', base_class: :Type, namespace: :v2)
+# => true
+```
+
+<ParamField path="name_or_key" type="String | Symbol" required>
+  The name or key to check.
+</ParamField>
+
+<ParamField path="base_class" type="Symbol" default=":Type">
+  The base class to check within.
+</ParamField>
+
+<ParamField path="namespace" type="Symbol | Array<Symbol>">
+  Namespace(s) to check. Includes `:base` unless `exclusive: true`.
+</ParamField>
+
+<ParamField path="exclusive" type="Boolean" default="false">
+  If true, only check the specified namespace(s).
+</ParamField>
+
+Checks if a given key or name is already defined under the same base class and namespace.
+
+### object_exist?
+
+```ruby
+type_map.object_exist?(UserType)
+# => true
+```
+
+<ParamField path="object" type="Class" required>
+  The object to check for existence.
+</ParamField>
+
+Find if a given object is already defined. Automatically infers the base class and namespaces from the object.
+
+### each_from
+
+```ruby
+type_map.each_from(:v2, base_class: :Type) do |type|
+  puts type.gql_name
+end
+
+# Or as lazy enumerator
+enum = type_map.each_from([:v2, :v3], base_classes: [:Type, :Directive])
+```
+
+<ParamField path="namespaces" type="Symbol | Array<Symbol>" required>
+  Namespace(s) to iterate over.
+</ParamField>
+
+<ParamField path="base_class" type="Symbol">
+  Specific base class to iterate. Can use `base_classes` for multiple.
+</ParamField>
+
+<ParamField path="base_classes" type="Array<Symbol>">
+  Multiple base classes to iterate over.
+</ParamField>
+
+<ParamField path="exclusive" type="Boolean" default="false">
+  If true, only iterate the specified namespace(s).
+</ParamField>
+
+Iterate over types/directives/schemas defined in the given namespaces. Returns a lazy enumerator if no block is given.
+
+### objects
+
+```ruby
+type_map.objects
+# => [UserType, PostType, StringScalar, ...]
+
+type_map.objects(base_classes: [:Type], namespaces: [:v2])
+# => [UserTypeV2, PostTypeV2, ...]
+```
+
+<ParamField path="base_classes" type="Array<Symbol>" default="[:Type, :Directive, :Schema]">
+  Base classes to include.
+</ParamField>
+
+<ParamField path="namespaces" type="Array<Symbol>">
+  Namespaces to search. Defaults to all namespaces.
+</ParamField>
+
+Get the list of all registered objects matching the criteria.
+
+### add_dependencies
+
+```ruby
+type_map.add_dependencies(
+  'app/graphql/types/user_type.rb',
+  'app/graphql/types/post_type.rb',
+  to: :v2
+)
+```
+
+<ParamField path="list" type="String | Array<String>" required>
+  File paths or procs to load when the namespace is accessed.
+</ParamField>
+
+<ParamField path="to" type="Symbol" required>
+  The namespace to associate dependencies with.
+</ParamField>
+
+Add a list of dependencies to lazy load when the namespace is accessed.
+
+### postpone_registration
+
+```ruby
+type_map.postpone_registration(UserType)
+```
+
+<ParamField path="object" type="Class" required>
+  The object to register later.
+</ParamField>
+
+Mark the given object to be registered later when a fetch is triggered. Captures the caller location for error reporting.
+
+### associate
+
+```ruby
+type_map.associate(:v2, GraphQL::V2)
+```
+
+<ParamField path="namespace" type="Symbol" required>
+  The namespace identifier.
+</ParamField>
+
+<ParamField path="mod" type="Module" required>
+  The Ruby module to associate with the namespace.
+</ParamField>
+
+Associate a Ruby module to a GraphQL namespace. If registered objects have no namespace, but their `module_parents` have been associated, the value is used.
+
+### associated_namespace_of
+
+```ruby
+type_map.associated_namespace_of(GraphQL::V2::UserType)
+# => :v2
+```
+
+<ParamField path="object" type="Class" required>
+  The object to find the associated namespace for.
+</ParamField>
+
+Grab all the `module_parents` from the object and return the first matching associated namespace.
+
+### after_register
+
+```ruby
+type_map.after_register('User', base_class: :Type) do |user_type|
+  puts "User type registered: #{user_type.gql_name}"
+end
+```
+
+<ParamField path="name_or_key" type="String | Symbol" required>
+  The name or key to watch for registration.
+</ParamField>
+
+<ParamField path="base_class" type="Symbol" default=":Type">
+  The base class to watch.
+</ParamField>
+
+<ParamField path="namespace" type="Symbol | Array<Symbol>">
+  Namespace(s) to watch.
+</ParamField>
+
+Add a callback that triggers when a type is registered under the given settings. If the item already exists, the callback is called immediately.
+
+## Usage Example
+
+```ruby
+# Access the global type map
+type_map = Rails::GraphQL.type_map
+
+# Register a type
+type_map.register(UserType)
+
+# Fetch a type
+user_type = type_map.fetch('User', base_class: :Type)
+
+# Check existence
+if type_map.exist?('CustomScalar', base_class: :Type)
+  # ...
+end
+
+# Iterate over all types in a namespace
+type_map.each_from(:v2, base_class: :Type) do |type|
+  puts type.gql_name
+end
+
+# Get all objects
+all_types = type_map.objects(base_classes: [:Type])
+```

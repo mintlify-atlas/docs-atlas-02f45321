@@ -1,0 +1,213 @@
+---
+title: "Union Type"
+description: "Define GraphQL unions that represent one of multiple possible object types"
+---
+
+## Overview
+
+Union types represent an object that could be one of a list of GraphQL object types. Unlike interfaces, unions don't define shared fields.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Specification:** [GraphQL Union Type Definition](http://spec.graphql.org/June2018/#UnionTypeDefinition)
+
+## Class Attributes
+
+<ParamField path="members" type="Array<Object>">
+  Collection of object types that are members of this union
+</ParamField>
+
+<ParamField path="VALID_MEMBER_TYPES" type="Array<Class>" default="[Type::Object]">
+  The list of accepted classes for union members (only Object types)
+</ParamField>
+
+## Class Methods
+
+### `append(*others)`
+
+Add one or more object types as members of the union.
+
+<ParamField path="others" type="Array<Object>" required>
+  Object types to add to the union. Can be classes or symbols (type names)
+</ParamField>
+
+```ruby
+class SearchResultUnion < GraphQL::UnionType
+  append UserType, PostType, CommentType
+  
+  # Or using symbols
+  append :user_type, :post_type
+end
+```
+
+<Expandable title="Member Validation">
+**Requirements:**
+- All members must be GraphQL object types
+- All members must share the same base class
+- Raises `ArgumentError` if members have different base classes
+</Expandable>
+
+### `type_for(value, *)`
+
+Determine which member type is compatible with the provided value.
+
+<ParamField path="value" type="Any" required>
+  The value to find a type for
+</ParamField>
+
+<ResponseField name="return" type="Object | nil">
+  Returns the first compatible member type, or `nil` if none found
+</ResponseField>
+
+```ruby
+SearchResultUnion.type_for(user_instance) # => UserType
+SearchResultUnion.type_for(post_instance) # => PostType
+```
+
+<Expandable title="Resolution Order">
+Members are checked in reverse order (most recently added first) to allow for override patterns.
+</Expandable>
+
+### `of_kind`
+
+Return the base type of objects in this union.
+
+<ResponseField name="return" type="Class">
+  The base type class shared by all union members
+</ResponseField>
+
+```ruby
+SearchResultUnion.of_kind # => ActiveRecord::Base (example)
+```
+
+### `=~(other)`
+
+Check if another type is equivalent to this union.
+
+<ParamField path="other" type="Type" required>
+  The type to compare
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the other type is equivalent to any union member
+</ResponseField>
+
+### `validate!(*)`
+
+Validate the union definition.
+
+<Expandable title="Validation Rules">
+**Requirements:**
+- Union must contain at least one member
+- All members must have the same base class
+- Raises `ArgumentError` if validation fails
+</Expandable>
+
+```ruby
+class EmptyUnion < GraphQL::UnionType
+  # No members defined
+end
+
+EmptyUnion.validate!
+# => ArgumentError: A union must contain at least one member.
+```
+
+## Included Modules
+
+<ParamField path="Helpers::Instantiable">
+  Provides instance creation capabilities
+</ParamField>
+
+## Configuration
+
+```ruby
+class SearchResultUnion < GraphQL::UnionType
+  description "Possible search result types"
+  
+  append UserType, PostType, CommentType
+end
+```
+
+## Usage Examples
+
+### Basic Union
+
+```ruby
+class MediaUnion < GraphQL::UnionType
+  append ImageType, VideoType, DocumentType
+end
+
+field :media_items, [MediaUnion] do
+  resolve ->(obj, args, ctx) {
+    # Return mix of Image, Video, and Document objects
+    obj.media_attachments
+  }
+end
+```
+
+### Dynamic Member Addition
+
+```ruby
+class NotificationUnion < GraphQL::UnionType
+  append MessageNotificationType
+  append LikeNotificationType
+end
+
+# Later, add more types
+NotificationUnion.append FollowNotificationType
+```
+
+### Union with Symbol References
+
+```ruby
+class ActivityUnion < GraphQL::UnionType
+  # Reference types by symbol (must be registered in type map)
+  append :comment_activity_type, :like_activity_type
+end
+```
+
+## Type Resolution
+
+When GraphQL needs to determine which member type a value belongs to, it calls `type_for(value)`. Ensure each member type implements `valid_member?(value)` correctly:
+
+```ruby
+class UserType < GraphQL::ObjectType
+  self.assigned_to = User
+  
+  # valid_member? automatically checks if value is a User instance
+end
+
+class PostType < GraphQL::ObjectType
+  self.assigned_to = Post
+  
+  # valid_member? automatically checks if value is a Post instance
+end
+```
+
+## Special Features
+
+### Base Class Enforcement
+
+All union members must share the same base class. This ensures consistent behavior when resolving union types:
+
+```ruby
+# Valid - all inherit from ActiveRecord::Base
+append UserType, PostType, CommentType
+
+# Invalid - mixing different base classes
+append UserType, SomeOtherBaseType  # ArgumentError!
+```
+
+### Inspection
+
+Unions provide detailed inspection output:
+
+```ruby
+SearchResultUnion.inspect
+# => "#<GraphQL::Union SearchResult (3) {User | Post | Comment}>"
+```
+
+## Related Types
+
+- [Object](/api/types/object) - Define union member types
+- [Interface](/api/types/interface) - Alternative for polymorphism with shared fields

@@ -1,0 +1,343 @@
+---
+title: 'Recommendations'
+description: 'Best practices and patterns for building GraphQL schemas with Rails GraphQL'
+---
+
+Follow these recommendations to get the most out of Rails GraphQL and build maintainable, performant schemas.
+
+<Info>
+In the future, items from this list may become [RuboCop](https://rubocop.org/) cops.
+</Info>
+
+## General Best Practices
+
+### Never Reference Types by Class
+
+<Danger>
+**Never reference a type by their class!** Always use symbolic or string references.
+</Danger>
+
+```ruby
+# Bad - direct class reference
+field(:user, User)
+
+# Good - string reference
+field(:user, 'User')
+```
+
+### Always Provide Type Information
+
+Always provide a type for fields and arguments, even if it will resolve properly to `:id` or `:string`:
+
+```ruby
+# Bad - implicit type
+field(:id)
+
+# Good - explicit type
+field(:id, :id, null: false)
+```
+
+### Use Appropriate Type Formats
+
+Use symbol names for scalars and string GQL names for everything else:
+
+```ruby
+# Scalars - use symbols
+field(:name, :string)
+field(:age, :int)
+field(:active, :boolean)
+
+# Objects, Interfaces, Unions - use strings
+field(:user, 'User')
+field(:posts, 'Post', array: true)
+```
+
+### Configure Arguments with Blocks
+
+Do not set arguments using the `arguments` named argument. Open a block and set them up inside instead:
+
+```ruby
+# Bad - inline arguments
+field(:user, 'User', arguments: { id: { type: :id } })
+
+# Good - block configuration
+field(:user, 'User') do
+  argument(:id, :id, null: false)
+end
+```
+
+### Use Alternatives Instead of Direct Schema Fields
+
+Do not define fields directly on the schema. Use [alternatives](/guides/alternatives) instead:
+
+```ruby
+# Bad - fields directly in schema
+class AppSchema < GraphQL::Schema
+  query_fields do
+    field(:user, 'User') { ... }
+    field(:posts, 'Post', array: true) { ... }
+  end
+end
+
+# Good - use alternatives
+class GraphQL::Queries::UserQueries < GraphQL::QuerySet
+  field(:user, 'User')
+  field(:users, 'User', array: true)
+end
+
+class AppSchema < GraphQL::Schema
+  import_all(GraphQL::Queries)
+end
+```
+
+### Provide Descriptions
+
+Provide descriptions for everything, either directly or using [I18n](/guides/i18n):
+
+```ruby
+# Direct description
+field(:email, :string) do
+  desc 'The user email address'
+end
+
+# Using I18n (preferred for larger projects)
+field(:email, :string)
+# Looks up: graphql.query.fields.email.description
+```
+
+### Avoid Chaining Definition
+
+Do not use fields [chaining definition](/guides/fields#chaining-definition):
+
+```ruby
+# Bad - chaining
+field(:name, :string).resolve { object.full_name }.authorize(:read_user)
+
+# Good - block configuration
+field(:name, :string) do
+  authorize(:read_user)
+  
+  def resolve
+    object.full_name
+  end
+end
+```
+
+### Limit Inline Types
+
+Avoid using [inline types](/guides/advanced/types#inline-creation), except for unions and enums:
+
+```ruby
+# Good - inline enum
+field(:status, enum!(:pending, :active, :archived))
+
+# Good - inline union
+field(:result, union!('User', 'Error'))
+
+# Bad - inline object (define a proper type instead)
+field(:metadata, object! { ... })
+```
+
+## Type Recommendations
+
+### Nested Fields Require Proper Types
+
+If a type requires nested fields to be fully qualified, don't create a scalar:
+
+```ruby
+# Bad - using JSON scalar for structured data
+field(:address, :json)
+
+# Good - define a proper type
+class GraphQL::AddressType < GraphQL::Type::Object
+  field(:line1, :string)
+  field(:line2, :string, null: true)
+  field(:city, :string)
+  field(:postal_code, :string)
+end
+
+field(:address, 'Address')
+```
+
+### Assign Types by Name
+
+Always assign a type to a class by its name, not its constant value:
+
+```ruby
+# Bad
+type_map.register(UserType, User)
+
+# Good
+type_map.register('User', User)
+```
+
+### Register Database Aliases
+
+Register all database aliases on the [Type Map](/guides/type-map#aliases) to avoid warnings:
+
+```ruby
+class AppSchema < GraphQL::Schema
+  configure do |config|
+    # Register column type aliases
+    config.type_map.register_alias(:jsonb, :json)
+    config.type_map.register_alias(:timestamp, :datetime)
+  end
+end
+```
+
+## Request Best Practices
+
+### Never Load Data During Resolve
+
+<Danger>
+**Never load data during the resolve stage!** This causes N+1 queries and performance issues.
+</Danger>
+
+```ruby
+# Bad - loading in resolve
+class GraphQL::Queries::User < GraphQL::Query
+  def resolve
+    User.find(arguments[:id])  # N+1 query!
+  end
+end
+
+# Good - loading in prepare
+class GraphQL::Queries::User < GraphQL::Query
+  def prepare
+    prepare_data_for(:user, User.find(arguments[:id]))
+  end
+  
+  def resolve
+    prepared_data[:user]
+  end
+end
+```
+
+### Use the Prepare Event Stage
+
+Use the `prepare` event stage of requests to load data:
+
+```ruby
+class GraphQL::UserType < GraphQL::Type::Object
+  field(:posts, 'Post', array: true)
+  
+  # Prepare loads data efficiently
+  def prepare_posts
+    # Batch load posts for all users in the request
+    prepare_association(:posts)
+  end
+  
+  # Resolve just returns the prepared data
+  def posts
+    prepared_data[:posts]
+  end
+end
+```
+
+Read more about [request preparation](/guides/request#preparing).
+
+## Callback Recommendations
+
+Prefer using `current.something` or `current_value.something` instead of just calling `something`:
+
+```ruby
+# Less clear - might be ambiguous
+before_resolve do
+  check_permission(user)
+end
+
+# Better - explicit context
+before_resolve do
+  check_permission(current.user)
+end
+
+# Best - very explicit
+before_resolve do
+  check_permission(current_value.user)
+end
+```
+
+This avoids unexpected results from method resolution ambiguity.
+
+## Organization Patterns
+
+### Group Related Fields
+
+Use [Set Definitions](/guides/alternatives#set-definition) to group related fields:
+
+```ruby
+# app/graphql/queries/user_queries.rb
+class GraphQL::Queries::UserQueries < GraphQL::QuerySet
+  field(:user, 'User')
+  field(:users, 'User', array: true)
+  field(:current_user, 'User', null: true)
+  
+  # Shared helper methods
+  def find_user(id)
+    User.find(id)
+  end
+end
+```
+
+### Use Standalone for Complex Fields
+
+Use [Standalone Definitions](/guides/alternatives#standalone-definition) for complex fields:
+
+```ruby
+# app/graphql/queries/search_users.rb
+class GraphQL::Queries::SearchUsers < GraphQL::Query
+  desc 'Advanced user search with filtering and pagination'
+  
+  argument(:query, :string, null: false)
+  argument(:filters, 'UserFilters', null: true)
+  argument(:page, :int, default: 1)
+  argument(:per_page, :int, default: 25)
+  
+  returns 'UserSearchResult'
+  
+  def prepare
+    # Complex search preparation logic
+  end
+  
+  def resolve
+    # Complex search resolution logic
+  end
+end
+```
+
+### Leverage Sources for Models
+
+Use [Sources](/guides/sources) to automatically generate types from models:
+
+```ruby
+# app/graphql/sources/user_source.rb
+class GraphQL::UserSource < GraphQL::ActiveRecordSource
+  build_all
+end
+```
+
+This generates types, queries, mutations, and inputs automatically.
+
+## Documentation Standards
+
+<Steps>
+  <Step title="Document all public fields">
+    Every field exposed in your API should have a clear description.
+  </Step>
+  
+  <Step title="Document arguments and their constraints">
+    Explain what each argument does and any validation rules.
+  </Step>
+  
+  <Step title="Document deprecations">
+    When deprecating fields, provide clear migration guidance.
+  </Step>
+  
+  <Step title="Use I18n for large schemas">
+    For projects with many types, centralize descriptions in I18n files.
+  </Step>
+</Steps>
+
+<Tip>
+Good documentation makes your GraphQL API self-explanatory and reduces support burden.
+</Tip>

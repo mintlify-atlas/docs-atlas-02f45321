@@ -1,0 +1,349 @@
+---
+title: Parser
+description: High-performance C-based GraphQL parser with full spec compliance
+---
+
+Rails GraphQL includes its own GraphQL parser written in C using the Ruby C API. This implementation delivers optimal performance while maintaining full compliance with the GraphQL specification.
+
+## Overview
+
+The parser converts GraphQL document strings into structured arrays that the framework uses for execution. While you typically won't use the parser directly, it's available for testing and validation.
+
+### Basic Usage
+
+Parse a GraphQL execution document:
+
+```ruby
+GQLParser.parse_execution('{ welcome }')
+# => [[[nil, nil, nil, nil, [["welcome", nil, nil, nil, nil]]]], nil]
+```
+
+### Check Spec Version
+
+View the supported GraphQL specification version:
+
+```ruby
+GQLParser::VERSION
+# => "October 2021"
+```
+
+## Performance
+
+The C-based implementation provides significant performance benefits:
+
+- **Native Speed** - Compiled C code runs faster than pure Ruby
+- **Memory Efficient** - Minimal object allocation during parsing
+- **Zero Dependencies** - No external parser libraries required
+
+<Tip>
+The parser is automatically used by all GraphQL requests. You don't need to call it explicitly unless you're debugging or validating documents outside of normal execution.
+</Tip>
+
+## Parser Concepts
+
+The parser converts documents into arrays of predefined sizes where information appears in consistent positions. This structure enables fast, predictable access during execution.
+
+### Token System
+
+Parsed elements are wrapped in `GQLParser::Token`, a `SimpleDelegator` that enhances arrays with metadata:
+
+```ruby
+result = GQLParser.parse_execution('query Sample { welcome }')
+# => [[["query", "Sample", nil, nil, [["welcome", nil, nil, nil, nil]]]], nil]
+
+operation = result.dig(0, 0)
+# => ["query", "Sample", nil, nil, [["welcome", nil, nil, nil, nil]]]
+
+operation.class
+# => GQLParser::Token
+
+operation.type
+# => :query
+
+operation.begin_line
+# => 1
+
+operation.end_column
+# => 25
+
+operation.of_type?(:query)
+# => true
+```
+
+### Token Methods
+
+<ResponseField name="type" type="Symbol">
+  The semantic type of this token (e.g., `:query`, `:field`, `:directive`)
+</ResponseField>
+
+<ResponseField name="begin_line" type="Integer">
+  Starting line number in the source document (1-indexed)
+</ResponseField>
+
+<ResponseField name="begin_column" type="Integer">
+  Starting column number in the source document (1-indexed)
+</ResponseField>
+
+<ResponseField name="end_line" type="Integer">
+  Ending line number in the source document
+</ResponseField>
+
+<ResponseField name="end_column" type="Integer">
+  Ending column number in the source document
+</ResponseField>
+
+<ResponseField name="of_type?(type)" type="Boolean">
+  Check if the token matches a specific type
+</ResponseField>
+
+## Data Structures
+
+The parser returns structured arrays for different GraphQL elements:
+
+### Execution Document
+
+```
+[[*operation], [*fragment]]
+```
+
+Top-level structure containing all operations and fragments.
+
+### Operation
+
+```
+[type, name, [*variable], [*directive], [*field]]
+```
+
+- `type` - Operation type: `"query"`, `"mutation"`, or `"subscription"` (or `nil` for shorthand)
+- `name` - Optional operation name
+- `[*variable]` - Variable definitions
+- `[*directive]` - Directives applied to the operation
+- `[*field]` - Root fields
+
+### Fragment
+
+```
+[name, type, [*directive], [*field]]
+```
+
+- `name` - Fragment name
+- `type` - Type condition
+- `[*directive]` - Directives
+- `[*field]` - Fragment fields
+
+### Field
+
+```
+[name, alias, [*argument], [*directive], [*field]]
+```
+
+- `name` - Field name
+- `alias` - Optional alias
+- `[*argument]` - Field arguments
+- `[*directive]` - Directives
+- `[*field]` - Nested selection set
+
+### Variable
+
+```
+[name, type, value, [*directive]]
+```
+
+- `name` - Variable name (without `$`)
+- `type` - Type token
+- `value` - Default value (if provided)
+- `[*directive]` - Directives
+
+### Directive
+
+```
+[name, [*argument]]
+```
+
+- `name` - Directive name (without `@`)
+- `[*argument]` - Directive arguments
+
+### Argument
+
+```
+[name, value, variable_name]
+```
+
+- `name` - Argument name
+- `value` - Literal value (if provided)
+- `variable_name` - Variable reference (if provided)
+
+### Type
+
+```
+[name, array_dimensions, bitwise_nullability]
+```
+
+- `name` - Type name
+- `array_dimensions` - Number of list wrappers
+- `bitwise_nullability` - Encoded nullability information
+
+### Spread
+
+```
+[name, type, [*directive], [*field]]
+```
+
+- `name` - Fragment name (for fragment spreads)
+- `type` - Type condition (for inline fragments)
+- `[*directive]` - Directives
+- `[*field]` - Fields (for inline fragments)
+
+## Type Encoding
+
+Types are encoded efficiently using two numeric fields:
+
+### Array Dimensions
+
+Integer representing list nesting depth:
+
+```graphql
+String      # 0 dimensions
+[String]    # 1 dimension
+[[String]]  # 2 dimensions
+```
+
+### Bitwise Nullability
+
+Integer encoding non-null markers at each level:
+
+```graphql
+String       #  0 (binary: 0)
+String!      #  1 (binary: 1)
+[String]     #  0 (binary: 00)
+[String]!    #  1 (binary: 01)
+[String!]    #  2 (binary: 10)
+[String!]!   #  3 (binary: 11)
+```
+
+Each bit represents whether that level is non-null, from innermost to outermost.
+
+## Implementation
+
+The parser is implemented in C at `ext/gql_parser.c`. Key parsing functions include:
+
+```c ext/gql_parser.c
+// Parse an execution document
+VALUE gql_parse_execution(VALUE self, VALUE document)
+{
+  if (!RB_TYPE_P(document, T_STRING))
+    rb_raise(rb_eArgError, "%+" PRIsVALUE " is not a string", document);
+
+  VALUE pieces[] = {Qnil, Qnil};
+  struct gql_scanner scanner = gql_new_scanner(document);
+  gql_next_lexeme_no_comments(&scanner);
+
+  while (scanner.lexeme != gql_i_eof) {
+    if (scanner.lexeme == gql_i_name)
+      scanner.lexeme = GQL_SAFE_NAME_TO_KEYWORD(&scanner, GQL_EXECUTION_KEYWORDS);
+
+    if (QGL_I_OPERATION(scanner.lexeme) || scanner.lexeme == gql_is_op_curly)
+      GQL_SAFE_PUSH(pieces[0], gql_parse_operation(&scanner));
+    else if (scanner.lexeme == gql_ie_fragment)
+      GQL_SAFE_PUSH(pieces[1], gql_parse_fragment(&scanner));
+    else if (scanner.lexeme != gql_i_comment)
+      scanner.lexeme = gql_i_unknown;
+
+    if (scanner.lexeme == gql_i_unknown)
+      gql_throw_parser_error(&scanner);
+  }
+  // ...
+}
+```
+
+<Note>
+View the complete implementation on [GitHub](https://github.com/virtualshield/rails-graphql/tree/master/ext).
+</Note>
+
+## Use Cases
+
+### Validating Syntax
+
+Test if a document is syntactically valid:
+
+```ruby
+begin
+  GQLParser.parse_execution('{ user { name } }')
+  puts "Valid GraphQL"
+rescue => e
+  puts "Parse error: #{e.message}"
+end
+```
+
+### Inspecting Structure
+
+Examine parsed document structure for debugging:
+
+```ruby
+result = GQLParser.parse_execution(<<~GRAPHQL)
+  query GetUser($id: ID!) {
+    user(id: $id) {
+      name
+      email
+    }
+  }
+GRAPHQL
+
+operation = result[0][0]
+puts "Operation type: #{operation[0]}"
+puts "Operation name: #{operation[1]}"
+puts "Variables: #{operation[2].inspect}"
+puts "Fields: #{operation[4].inspect}"
+```
+
+### Testing Parser Behavior
+
+```ruby
+class ParserTest < ActiveSupport::TestCase
+  test 'parses shorthand query' do
+    result = GQLParser.parse_execution('{ welcome }')
+    operation = result[0][0]
+    
+    assert_nil operation[0]  # No explicit type
+    assert_nil operation[1]  # No name
+    assert_equal 'welcome', operation[4][0][0]  # Field name
+  end
+
+  test 'parses named operation with variables' do
+    result = GQLParser.parse_execution('query Test($id: ID!) { user(id: $id) { name } }')
+    operation = result[0][0]
+    
+    assert_equal 'query', operation[0]
+    assert_equal 'Test', operation[1]
+    assert_equal 1, operation[2].length  # One variable
+  end
+end
+```
+
+## GraphQL Specification
+
+The parser implements the **October 2021** GraphQL specification with full support for:
+
+- Queries, mutations, and subscriptions
+- Variables and default values
+- Fragments (named and inline)
+- Directives
+- List and non-null type modifiers
+- Comments and string literals
+- Aliases and arguments
+
+<Info>
+The parser is continuously updated to maintain spec compliance as the GraphQL specification evolves.
+</Info>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="Testing" icon="vial" href="/tools/testing">
+    Use `valid?` to validate documents without parsing manually
+  </Card>
+  
+  <Card title="Introspection" icon="magnifying-glass" href="/tools/introspection">
+    Query schema structure programmatically
+  </Card>
+</CardGroup>

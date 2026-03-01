@@ -1,0 +1,452 @@
+---
+title: Error Handling
+description: Comprehensive error handling with rescue_from, partial responses, and console debugging
+---
+
+## Overview
+
+Rails GraphQL provides robust error handling that follows the GraphQL specification. Errors during field processing produce partial responses with detailed error information under the `errors` key.
+
+<Warning>
+**Important**: Exceptions are always captured and added to errors unless you return `false` from a `rescue_from` handler.
+</Warning>
+
+## Error Response Structure
+
+Per the [GraphQL Spec](http://spec.graphql.org/October2021/#sec-Handling-Field-Errors), errors produce partial responses:
+
+```json
+{
+  "data": {
+    "user": null,
+    "posts": [
+      { "id": "1", "title": "Hello" }
+    ]
+  },
+  "errors": [
+    {
+      "message": "User not found",
+      "path": ["user"],
+      "locations": [{ "line": 2, "column": 3 }],
+      "extensions": {
+        "exception": "ActiveRecord::RecordNotFound"
+      }
+    }
+  ]
+}
+```
+
+## Adding Errors
+
+The request provides three methods for adding errors:
+
+### exception_to_error
+
+Converts exceptions to error responses:
+
+```ruby
+def exception_to_error(exception, node, **extra)
+  # Adds exception to extensions
+  # Gets message from exception if not provided
+end
+```
+
+<CodeGroup>
+```ruby Basic Usage
+begin
+  User.find(id)
+rescue ActiveRecord::RecordNotFound => e
+  request.exception_to_error(e, field)
+end
+```
+
+```ruby With Custom Message
+begin
+  perform_action
+rescue SomeError => e
+  request.exception_to_error(
+    e,
+    field,
+    message: "Custom error message"
+  )
+end
+```
+</CodeGroup>
+
+### report_node_error
+
+Reports errors for specific nodes:
+
+```ruby
+def report_node_error(message, node, **extra)
+  # Adds location from node if not provided
+end
+```
+
+<CodeGroup>
+```ruby Field Error
+request.report_node_error(
+  "Invalid input",
+  field,
+  extensions: { code: "VALIDATION_ERROR" }
+)
+```
+
+```ruby Argument Error
+request.report_node_error(
+  "Argument must be positive",
+  argument,
+  path: ["createUser", "age"]
+)
+```
+</CodeGroup>
+
+### report_error
+
+Simplest error reporting method:
+
+```ruby
+def report_error(message, **extra)
+  # Adds current stack as path if not provided
+end
+```
+
+<Tip>
+`report_error` returns `nil`, making it perfect for resolver return values:
+
+```ruby
+def welcome
+  return request.report_error('Not authorized') unless authorized?
+  # No need for explicit nil return
+end
+```
+</Tip>
+
+<CodeGroup>
+```ruby Simple Error
+def create_user
+  request.report_error("Email already taken")
+end
+```
+
+```ruby With Extensions
+def update_user
+  request.report_error(
+    "Validation failed",
+    extensions: {
+      errors: { email: ["is invalid"] }
+    }
+  )
+end
+```
+</CodeGroup>
+
+## Using rescue_from
+
+Schemas implement ActiveSupport::Rescuable for exception handling:
+
+```ruby
+# From lib/rails/graphql/schema.rb
+rescue_from(PersistedQueryNotFound) do |error|
+  response = { errors: [{ message: +'PersistedQueryNotFound' }] }
+  error.request.force_response(response, error)
+end
+```
+
+### Exception Context
+
+Rescued exceptions have request context:
+
+<ResponseField name="args" type="Hash">
+  Arguments passed to the request
+</ResponseField>
+
+<ResponseField name="source" type="Object">
+  Component where the error occurred
+</ResponseField>
+
+<ResponseField name="request" type="Request">
+  The request instance
+</ResponseField>
+
+<ResponseField name="response" type="Response">
+  The response instance
+</ResponseField>
+
+<ResponseField name="document" type="Document">
+  The parsed GraphQL document
+</ResponseField>
+
+### Custom Error Handlers
+
+<CodeGroup>
+```ruby Validation Errors
+# app/graphql/app_schema.rb
+rescue_from(ActiveRecord::RecordInvalid) do |error|
+  request.report_error(
+    error.message,
+    extensions: {
+      code: "VALIDATION_ERROR",
+      errors: error.record.errors.as_json
+    }
+  )
+end
+```
+
+```ruby Authentication Errors
+rescue_from(AuthenticationError) do |error|
+  response = {
+    errors: [{
+      message: "Authentication required",
+      extensions: { code: "UNAUTHENTICATED" }
+    }]
+  }
+  error.request.force_response(response, error)
+end
+```
+
+```ruby Authorization Errors
+rescue_from(Pundit::NotAuthorizedError) do |error|
+  request.report_error(
+    "You don't have permission to perform this action",
+    extensions: {
+      code: "FORBIDDEN",
+      policy: error.policy.class.name
+    }
+  )
+end
+```
+
+```ruby Custom Errors
+class BusinessLogicError < StandardError
+  attr_reader :code, :details
+  
+  def initialize(message, code: nil, details: {})
+    super(message)
+    @code = code
+    @details = details
+  end
+end
+
+rescue_from(BusinessLogicError) do |error|
+  request.report_error(
+    error.message,
+    extensions: {
+      code: error.code,
+      **error.details
+    }
+  )
+end
+```
+</CodeGroup>
+
+### Skipping Error Reporting
+
+Return `false` to skip automatic error handling:
+
+```ruby
+rescue_from(SilentError) do |error|
+  # Log it but don't add to response
+  Rails.logger.warn("Silent error: #{error.message}")
+  false  # Prevents automatic error addition
+end
+```
+
+## Console Display
+
+Errors produce formatted output in the server console:
+
+```ruby
+# app/graphql/app_schema.rb
+field(:welcome).resolve { raise 'Something went wrong.' }
+```
+
+**Console output:**
+
+```
+   | Loc | Field          | Object | Arguments | Result
+---+-----+----------------+--------+-----------+--------------------
+ 1 | GQL | schema         | :base  |           | GraphQL::AppSchema
+ 2 | 1:1 | query          | nil    | {}        | _Query
+ 3 | 1:3 | _Query.welcome | nil    | {}        | ↓
+
+Something went wrong. (RuntimeError) [resolve]
+/home/app/graphql/app_schema.rb:3:in `block in <class:AppSchema>'
+```
+
+<Info>
+The table shows the execution path leading to the error, making debugging easier.
+</Info>
+
+### Table Columns
+
+<ResponseField name="Loc" type="string">
+  Location in GraphQL document or "GQL" for internal
+</ResponseField>
+
+<ResponseField name="Field" type="string">
+  Field name or operation type
+</ResponseField>
+
+<ResponseField name="Object" type="string">
+  Parent object or type
+</ResponseField>
+
+<ResponseField name="Arguments" type="Hash">
+  Arguments passed to the field
+</ResponseField>
+
+<ResponseField name="Result" type="any">
+  Field result or "↓" if error occurred
+</ResponseField>
+
+## Error Categories
+
+### Validation Errors
+
+```ruby
+field(:create_user).perform do |input:|
+  user = User.new(input)
+  unless user.valid?
+    return request.report_error(
+      "Validation failed",
+      extensions: { errors: user.errors.as_json }
+    )
+  end
+  user.save!
+end
+```
+
+### Authentication Errors
+
+```ruby
+field(:current_user).resolve do
+  return request.report_error("Not authenticated") unless context[:user]
+  context[:user]
+end
+```
+
+### Authorization Errors
+
+```ruby
+field(:delete_post).authorize do
+  unless current_user.can?(:delete, post)
+    request.report_error(
+      "Unauthorized",
+      extensions: { code: "FORBIDDEN" }
+    )
+    false  # Stops execution
+  end
+end
+```
+
+### Business Logic Errors
+
+```ruby
+field(:transfer_funds).perform do |from:, to:, amount:|
+  if from.balance < amount
+    return request.report_error(
+      "Insufficient funds",
+      extensions: {
+        code: "INSUFFICIENT_FUNDS",
+        available: from.balance,
+        requested: amount
+      }
+    )
+  end
+  
+  from.withdraw(amount)
+  to.deposit(amount)
+end
+```
+
+## Best Practices
+
+<Card title="Use Specific Handlers" icon="target">
+  Create specific `rescue_from` handlers for different error types:
+
+  ```ruby
+  rescue_from(ActiveRecord::RecordNotFound) { |e| handle_not_found(e) }
+  rescue_from(ValidationError) { |e| handle_validation(e) }
+  rescue_from(AuthError) { |e| handle_auth(e) }
+  ```
+</Card>
+
+<Card title="Include Error Codes" icon="code">
+  Add machine-readable codes to extensions:
+
+  ```ruby
+  extensions: {
+    code: "VALIDATION_ERROR",
+    field: "email"
+  }
+  ```
+</Card>
+
+<Card title="Provide Context" icon="circle-info">
+  Include relevant details in error extensions:
+
+  ```ruby
+  extensions: {
+    attempted_action: "delete_post",
+    required_role: "admin",
+    user_role: "user"
+  }
+  ```
+</Card>
+
+<Card title="Log Appropriately" icon="file-lines">
+  Log errors before reporting:
+
+  ```ruby
+  rescue_from(CriticalError) do |error|
+    Rails.logger.error("Critical: #{error.message}")
+    request.report_error("An error occurred")
+  end
+  ```
+</Card>
+
+## Testing Error Handling
+
+<CodeGroup>
+```ruby RSpec
+RSpec.describe GraphQL::AppSchema do
+  it "handles validation errors" do
+    result = execute(<<~GQL, user: nil)
+      mutation {
+        createUser(input: { email: "invalid" }) {
+          id
+        }
+      }
+    GQL
+    
+    expect(result[:errors]).to be_present
+    expect(result[:errors][0][:extensions][:code]).to eq("VALIDATION_ERROR")
+  end
+end
+```
+
+```ruby Minitest
+class SchemaTest < ActiveSupport::TestCase
+  test "authentication errors" do
+    result = GraphQL::AppSchema.execute(<<~GQL)
+      { currentUser { id } }
+    GQL
+    
+    assert result[:errors].present?
+    assert_equal "Not authenticated", result[:errors][0][:message]
+  end
+end
+```
+</CodeGroup>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Request" icon="paper-plane" href="/core/request">
+    Request lifecycle and processing
+  </Card>
+  <Card title="Events" icon="bolt" href="/advanced/events">
+    Event system for error handling
+  </Card>
+</CardGroup>

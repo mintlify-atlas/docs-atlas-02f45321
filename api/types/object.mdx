@@ -1,0 +1,146 @@
+---
+title: "Object Type"
+description: "Define GraphQL object types with named fields that yield values of specific types"
+---
+
+## Overview
+
+Object types represent a list of named fields, each of which yield a value of a specific type. Objects are the most common output type in GraphQL schemas.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Specification:** [GraphQL Object Type Definition](http://spec.graphql.org/June2018/#ObjectTypeDefinition)
+
+## Class Attributes
+
+<ParamField path="field_type" type="Class" default="Field::OutputField">
+  The type of field class used for this type's fields
+</ParamField>
+
+<ParamField path="valid_field_types" type="Array<Class>">
+  Valid field types that can be used in object fields:
+  - `Type::Enum`
+  - `Type::Interface`
+  - `Type::Object`
+  - `Type::Scalar`
+  - `Type::Union`
+</ParamField>
+
+## Class Methods
+
+### `implements(*others, import_fields: true)`
+
+Assign one or more interfaces to the object type.
+
+<ParamField path="others" type="Array<Interface>" required>
+  One or more interface types to implement
+</ParamField>
+
+<ParamField path="import_fields" type="Boolean" default="true">
+  Whether to automatically import fields from the interface
+</ParamField>
+
+```ruby
+class UserType < GraphQL::ObjectType
+  implements NodeInterface, TimestampedInterface
+end
+```
+
+### `implements?(interface)`
+
+Check if the object implements a given interface.
+
+<ParamField path="interface" type="Interface" required>
+  The interface to check
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the object implements the interface
+</ResponseField>
+
+```ruby
+UserType.implements?(NodeInterface) # => true
+```
+
+### `valid_member?(value)`
+
+Check if a given value is a valid member of this object type.
+
+<ParamField path="value" type="Any" required>
+  The value to validate
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value is valid for this object type
+</ResponseField>
+
+```ruby
+UserType.valid_member?(user_instance) # => true
+```
+
+<Expandable title="Validation Logic">
+A value is considered valid if:
+- It passes `valid_assignment?` (is an instance of the assigned class)
+- OR all fields can be accessed on the value (via hash keys or methods)
+</Expandable>
+
+### `=~(other)`
+
+Check if another type is equivalent to this object.
+
+<ParamField path="other" type="Type" required>
+  The type to compare
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the other type is equivalent or is an interface this object implements
+</ResponseField>
+
+## Included Modules
+
+<ParamField path="Helpers::Instantiable">
+  Provides instance creation capabilities
+</ParamField>
+
+<ParamField path="Helpers::WithAssignment">
+  Allows assignment to Ruby classes via `assigned_to`
+</ParamField>
+
+<ParamField path="Helpers::WithFields">
+  Provides field definition and management methods
+</ParamField>
+
+## Configuration
+
+```ruby
+class UserType < GraphQL::ObjectType
+  description "Represents a user in the system"
+  
+  # Assign to a Ruby class
+  self.assigned_to = User
+  
+  # Implement interfaces
+  implements NodeInterface
+  
+  # Define fields
+  field :id, :id, null: false
+  field :name, :string
+  field :email, :string
+end
+```
+
+## Special Features
+
+### Interface Implementation
+
+When implementing an interface with `import_fields: true`, all interface fields are automatically copied to the object. Pre-existing fields with the same name must be equivalent.
+
+### Field Inheritance
+
+Fields defined in parent object classes are automatically inherited by subclasses.
+
+## Related Types
+
+- [Interface](/api/types/interface) - Define shared field contracts
+- [Union](/api/types/union) - Combine multiple object types
+- [Fields](/api/fields) - Define object fields

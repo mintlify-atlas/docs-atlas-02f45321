@@ -1,0 +1,492 @@
+---
+title: GraphQL Channel Integration  
+description: Build real-time GraphQL applications using Action Cable channels with the GraphQL::Channel module for WebSocket handling and subscriptions.
+---
+
+The `GraphQL::Channel` module enables GraphQL over WebSockets through Action Cable, providing real-time subscriptions and live query updates. It manages subscription lifecycles, WebSocket connections, and broadcast handling.
+
+## Quick Start
+
+Include the `GraphQL::Channel` module in your Action Cable channel:
+
+<CodeGroup>
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+  
+  # Specify which schema to use
+  self.gql_schema = GraphQL::AppSchema
+end
+```
+
+```ruby app/channels/graphql_channel.rb (Alternative)
+class GraphqlChannel < GraphQL::BaseChannel
+  # GraphQL::BaseChannel already includes GraphQL::Channel
+  self.gql_schema = GraphQL::AppSchema
+end
+```
+</CodeGroup>
+
+## How It Works
+
+<Steps>
+  <Step title="Client Connects">
+    Client establishes WebSocket connection to the channel
+    
+    ```javascript
+    const consumer = createConsumer('ws://localhost:3000/cable');
+    const subscription = consumer.subscriptions.create('GraphqlChannel', {
+      received(data) {
+        console.log('Received:', data);
+      }
+    });
+    ```
+  </Step>
+  
+  <Step title="Execute Queries">
+    Client sends GraphQL operations through the WebSocket
+    
+    ```javascript
+    subscription.perform('execute', {
+      query: 'subscription { messageAdded { id body } }',
+      variables: {},
+      operationName: null
+    });
+    ```
+  </Step>
+  
+  <Step title="Track Subscriptions">
+    The channel tracks active subscriptions and manages their lifecycle
+    
+    ```ruby
+    # lib/rails/graphql/railties/channel.rb:52-54
+    def gql_merge_subscriptions(request)
+      gql_subscriptions.merge!(request.subscriptions)
+    end
+    ```
+  </Step>
+  
+  <Step title="Broadcast Updates">
+    Subscription updates are automatically broadcast to connected clients
+    
+    ```ruby
+    # lib/rails/graphql/railties/channel.rb:56-60
+    def gql_response(request)
+      { result: request.response.as_json, more: request.subscriptions? }
+    end
+    ```
+  </Step>
+</Steps>
+
+## Schema Configuration
+
+Configure which GraphQL schema the channel uses:
+
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+  
+  # As a string (lazy loaded)
+  self.gql_schema = 'GraphQL::AppSchema'
+  
+  # Or as a class reference
+  self.gql_schema = GraphQL::AppSchema
+end
+```
+
+<Note>
+  If no schema is specified, the channel will attempt to find a schema matching your application name (e.g., `GraphQL::AppSchema` for an app named `App`).
+</Note>
+
+## Execute Action
+
+The default `execute` action processes GraphQL operations (lib/rails/graphql/railties/channel.rb:25-27):
+
+```ruby
+def execute(data)
+  transmit(gql_request_response(data))
+end
+```
+
+### Request Processing
+
+The `gql_request_response` method (lib/rails/graphql/railties/channel.rb:38-48) handles the execution flow:
+
+```ruby
+def gql_request_response(data)
+  xargs = gql_params(data)
+  schema, context, query = xargs.extract!(:schema, :context, :query).values
+
+  request = gql_request(schema)
+  request.context = context
+  request.execute(query, **xargs)
+
+  gql_merge_subscriptions(request)
+  gql_response(request)
+end
+```
+
+### Parameter Extraction
+
+The `gql_params` method (lib/rails/graphql/railties/channel.rb:63-80) builds request parameters from WebSocket data:
+
+```ruby
+def gql_params(data)
+  cache_key = gql_query_cache_key(
+    data['query_cache_key'],
+    data['query_cache_version'],
+  )
+
+  {
+    query: data['query'],
+    origin: self,  # Critical for subscriptions!
+    variables: gql_variables(data),
+    operation_name: data['operation_name'] || data['operationName'],
+    compiled: gql_compiled_request?(data),
+    context: gql_context(data),
+    schema: gql_schema(data),
+    hash: cache_key,
+    as: :hash,
+  }
+end
+```
+
+<Warning>
+  The `origin: self` parameter is **vital** for subscriptions to work correctly. It allows the subscription provider to transmit updates back to the correct channel instance.
+</Warning>
+
+## Subscription Management
+
+The channel automatically manages subscription lifecycles:
+
+### Tracking Active Subscriptions
+
+```ruby
+# lib/rails/graphql/railties/channel.rb:126-129
+def gql_subscriptions
+  @gql_subscriptions ||= {}
+end
+```
+
+This hash stores subscription IDs mapped to their associated fields.
+
+### Cleanup on Disconnect
+
+An `after_unsubscribe` callback ensures subscriptions are cleaned up (lib/rails/graphql/railties/channel.rb:18-21):
+
+```ruby
+included do
+  # Set it up a callback after unsubscribed so that all the subscriptions
+  # can be properly unsubscribed
+  after_unsubscribe :gql_clear_subscriptions
+end
+```
+
+### Remove Subscriptions
+
+```ruby
+# lib/rails/graphql/railties/channel.rb:131-142
+def gql_clear_subscriptions
+  gql_remove_subscription(*gql_subscriptions.keys) unless gql_subscriptions.empty?
+end
+
+def gql_remove_subscriptions(*sids)
+  gql_schema.remove_subscriptions(*sids)
+end
+```
+
+## Authentication & Context
+
+Override `gql_context` to add authentication and connection-specific data:
+
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+  
+  protected
+  
+  def gql_context(data)
+    super.merge(
+      current_user: current_user,
+      connection_id: connection.connection_identifier,
+      action: (data['action'] || :receive).to_sym
+    )
+  end
+end
+```
+
+Default context (lib/rails/graphql/railties/channel.rb:109-111):
+
+```ruby
+def gql_context(data)
+  { action: (data['action'] || :receive).to_sym }
+end
+```
+
+## Connection Authentication
+
+Authenticate at the connection level:
+
+```ruby app/channels/application_cable/connection.rb
+module ApplicationCable
+  class Connection < ActionCable::Connection::Base
+    identified_by :current_user
+
+    def connect
+      self.current_user = find_verified_user
+    end
+
+    private
+
+    def find_verified_user
+      token = request.params[:token]
+      if verified_user = User.find_by(token: token)
+        verified_user
+      else
+        reject_unauthorized_connection
+      end
+    end
+  end
+end
+```
+
+Access in the channel:
+
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+  
+  protected
+  
+  def gql_context(data)
+    super.merge(current_user: current_user)
+  end
+end
+```
+
+## Client Integration
+
+### JavaScript Client
+
+```javascript
+import { createConsumer } from '@rails/actioncable';
+
+class GraphQLClient {
+  constructor(url, token) {
+    this.consumer = createConsumer(`${url}?token=${token}`);
+    this.subscription = null;
+  }
+
+  subscribe(channelName = 'GraphqlChannel') {
+    this.subscription = this.consumer.subscriptions.create(channelName, {
+      received: (data) => this.handleResponse(data),
+      connected: () => console.log('Connected to GraphQL channel'),
+      disconnected: () => console.log('Disconnected from GraphQL channel')
+    });
+  }
+
+  execute(query, variables = {}, operationName = null) {
+    this.subscription.perform('execute', {
+      query,
+      variables,
+      operation_name: operationName
+    });
+  }
+
+  handleResponse(data) {
+    const { result, more } = data;
+    
+    if (result.errors) {
+      console.error('GraphQL errors:', result.errors);
+    }
+    
+    if (result.data) {
+      console.log('GraphQL data:', result.data);
+    }
+    
+    // 'more' indicates if subscriptions are active
+    if (more) {
+      console.log('Waiting for subscription updates...');
+    }
+  }
+
+  disconnect() {
+    this.consumer.disconnect();
+  }
+}
+
+// Usage
+const client = new GraphQLClient('ws://localhost:3000/cable', 'user-token');
+client.subscribe();
+
+// Execute a subscription
+client.execute(`
+  subscription MessageAdded($channelId: ID!) {
+    messageAdded(channelId: $channelId) {
+      id
+      body
+      createdAt
+    }
+  }
+`, { channelId: '123' });
+```
+
+### Response Format
+
+The channel returns responses with this structure (lib/rails/graphql/railties/channel.rb:56-60):
+
+```ruby
+def gql_response(request)
+  { result: request.response.as_json, more: request.subscriptions? }
+end
+```
+
+- `result` - The GraphQL response (data and/or errors)
+- `more` - Boolean indicating if subscriptions are active
+
+## Advanced Customization
+
+### Custom Actions
+
+Add additional channel actions:
+
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+  
+  def ping(data)
+    transmit({ pong: Time.current })
+  end
+  
+  def cancel_subscription(data)
+    sid = data['subscription_id']
+    gql_remove_subscription(sid)
+    transmit({ cancelled: sid })
+  end
+end
+```
+
+### Dynamic Schema Selection
+
+```ruby app/channels/graphql_channel.rb
+protected
+
+def gql_schema(data)
+  case data['api_version']
+  when 'v2'
+    GraphQL::ApiV2Schema
+  when 'v1'
+    GraphQL::ApiV1Schema
+  else
+    super
+  end
+end
+```
+
+### Variables Parsing
+
+The channel automatically parses variables (lib/rails/graphql/railties/channel.rb:114-123):
+
+```ruby
+def gql_variables(data, variables = nil)
+  variables ||= data['variables']
+
+  case variables
+  when ::ActionController::Parameters then variables.permit!.to_h
+  when String then variables.present? ? JSON.parse(variables) : {}
+  when Hash   then variables
+  else {}
+  end
+end
+```
+
+### Request Instance Reuse
+
+The channel reuses request instances for efficiency (lib/rails/graphql/railties/channel.rb:85-87):
+
+```ruby
+def gql_request(schema = gql_schema)
+  @gql_request ||= ::Rails::GraphQL::Request.new(schema)
+end
+```
+
+## Monitoring & Debugging
+
+Add logging to track subscription activity:
+
+```ruby app/channels/graphql_channel.rb
+class GraphqlChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+  
+  def subscribed
+    logger.info "Client #{connection.connection_identifier} subscribed"
+  end
+  
+  def unsubscribed
+    logger.info "Client #{connection.connection_identifier} unsubscribed with #{gql_subscriptions.count} active subscriptions"
+  end
+  
+  protected
+  
+  def gql_merge_subscriptions(request)
+    super
+    logger.debug "Active subscriptions: #{gql_subscriptions.keys}"
+  end
+end
+```
+
+## Testing
+
+Test your GraphQL channel:
+
+```ruby spec/channels/graphql_channel_spec.rb
+require 'rails_helper'
+
+RSpec.describe GraphqlChannel, type: :channel do
+  let(:user) { create(:user) }
+  
+  before do
+    stub_connection(current_user: user)
+  end
+  
+  it 'successfully subscribes' do
+    subscribe
+    expect(subscription).to be_confirmed
+  end
+  
+  it 'executes GraphQL queries' do
+    subscribe
+    
+    perform :execute, query: '{ currentUser { id } }'
+    
+    expect(transmissions.last).to include(
+      'result' => hash_including('data'),
+      'more' => false
+    )
+  end
+  
+  it 'tracks subscriptions' do
+    subscribe
+    
+    perform :execute, query: 'subscription { messageAdded { id } }'
+    
+    expect(subscription.gql_subscriptions).not_to be_empty
+  end
+end
+```
+
+## Helper Reference
+
+| Method | Source | Description |
+|--------|--------|-------------|
+| `execute` | channel.rb:25-27 | Main action for GraphQL requests |
+| `gql_request_response` | channel.rb:38-48 | Processes request and returns response |
+| `gql_params` | channel.rb:63-80 | Extracts parameters from data |
+| `gql_context` | channel.rb:109-111 | Builds request context |
+| `gql_variables` | channel.rb:114-123 | Parses variables |
+| `gql_subscriptions` | channel.rb:127-129 | Tracks active subscriptions |
+| `gql_merge_subscriptions` | channel.rb:52-54 | Merges new subscriptions |
+| `gql_clear_subscriptions` | channel.rb:132-134 | Cleanup on disconnect |
+| `gql_remove_subscriptions` | channel.rb:137-139 | Remove specific subscriptions |
+
+For complete implementation details, see the [Channel source](https://github.com/virtualshield/rails-graphql/blob/master/lib/rails/graphql/railties/channel.rb).

@@ -1,0 +1,99 @@
+---
+title: Introduction
+description: Rails GraphQL - A GraphQL server framework designed to feel right at home in your Rails application
+---
+
+Rails GraphQL is a fresh implementation of a GraphQL server, designed to be as close as possible to Rails architecture and interfaces. It provides shortcuts, syntax sugar, and direct connections with Rails features like ActiveRecord and ActionCable.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get up and running with your first GraphQL query in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Add Rails GraphQL to your Rails application
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how Rails GraphQL integrates with Rails
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/guides">
+    Deep dive into schemas, types, and fields
+  </Card>
+</CardGroup>
+
+## Why Rails GraphQL?
+
+Rails GraphQL brings GraphQL to Rails in a way that feels natural to Rails developers. Instead of fighting against Rails conventions, it embraces them.
+
+### Native Rails integration
+
+Built from the ground up to work seamlessly with Rails patterns and conventions. The framework feels like a natural extension of Rails, not a foreign library bolted on.
+
+### Outstanding performance
+
+Features a custom **C-based parser** written from scratch using Ruby's C-API, delivering exceptional performance for parsing GraphQL queries.
+
+### Ruby-first DSL
+
+Define your GraphQL schemas using the most Ruby-like DSL available. No need to learn a new syntax - if you know Rails, you'll feel right at home.
+
+### ActiveRecord integration
+
+Direct connection with ActiveRecord through the Sources feature. Automatically generate GraphQL types from your models with full support for PostgreSQL, MySQL, and SQLite.
+
+### Multiple schemas support
+
+Run one or multiple GraphQL schemas under the same application or across multiple engines, with proper namespace isolation.
+
+### Real-time subscriptions
+
+Built-in subscription support with ActionCable provider, making it easy to add real-time features to your GraphQL API.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="GraphQL Parser" icon="code">
+    Custom C-based parser supporting the October 2021 spec
+  </Card>
+  <Card title="Schemas" icon="sitemap">
+    One or multiple schemas under the same application
+  </Card>
+  <Card title="Queries & Mutations" icon="arrows-rotate">
+    3 different ways to define queries and mutations
+  </Card>
+  <Card title="Subscriptions" icon="tower-broadcast">
+    Real-time updates with ActionCable provider
+  </Card>
+  <Card title="Extended Scalars" icon="hashtag">
+    All spec scalars plus: any, bigint, binary, date, date_time, decimal, json, and time
+  </Card>
+  <Card title="Sources" icon="database">
+    Bridge between classes and GraphQL types with full ActiveRecord support
+  </Card>
+  <Card title="Type Map" icon="map">
+    Centralized registry where all types are stored and resolved
+  </Card>
+  <Card title="Directives" icon="at">
+    4 built-in directives with event-driven interface for custom directives
+  </Card>
+</CardGroup>
+
+## GraphQL spec compliance
+
+Rails GraphQL supports the **October 2021** GraphQL specification, providing:
+
+- Full introspection support with proper descriptions
+- Standard directives: `@deprecated`, `@skip`, `@include`, and `@specifiedBy`
+- All GraphQL types: Objects, Interfaces, Unions, Enums, Inputs, and Scalars
+- Complete validation and error handling
+
+<Info>
+  The framework's spec version is available at `Rails::GraphQL::SPEC_VERSION`
+</Info>
+
+## Next steps
+
+Ready to get started? Follow our quickstart guide to create your first GraphQL query.
+
+<Card title="Get Started" icon="rocket" href="/quickstart">
+  Build your first GraphQL API in 3 simple steps
+</Card>

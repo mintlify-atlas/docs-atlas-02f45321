@@ -1,0 +1,159 @@
+---
+title: Callback
+description: An extra powerful proc that can handle way more situations than the original block caller
+---
+
+## Overview
+
+The `Callback` class is a central component of the Rails GraphQL event system. It wraps blocks or symbols as callbacks that can be triggered by events, with support for filtering, argument injection, and context management.
+
+## Class Methods
+
+### set_context
+
+Contextualizes a callback with a given instance.
+
+```ruby
+Callback.set_context(item, context)
+```
+
+<ParamField path="item" type="Proc">
+  The callback proc to contextualize
+</ParamField>
+
+<ParamField path="context" type="Object">
+  The context instance to bind to the callback
+</ParamField>
+
+<ResponseField name="return" type="Lambda">
+  Returns a lambda that injects the context as `_callback_context`
+</ResponseField>
+
+## Instance Methods
+
+### initialize
+
+Creates a new callback instance.
+
+```ruby
+Callback.new(target, event_name, *args, **xargs, &block)
+```
+
+<ParamField path="target" type="Object" required>
+  The target object that owns this callback
+</ParamField>
+
+<ParamField path="event_name" type="Symbol" required>
+  The name of the event this callback responds to
+</ParamField>
+
+<ParamField path="args" type="Array">
+  Optional arguments to prepend when calling the callback
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Keyword arguments including filters and options. Special option `exclusive_callback` controls exclusivity.
+</ParamField>
+
+<ParamField path="block" type="Proc">
+  The callback block or a symbol representing a method name
+</ParamField>
+
+### call
+
+Executes the callback if the event matches and filters pass.
+
+```ruby
+callback.call(event, *args, _callback_context: nil, **xargs)
+```
+
+<ParamField path="event" type="Event" required>
+  The event being triggered
+</ParamField>
+
+<ParamField path="args" type="Array">
+  Arguments to pass to the callback
+</ParamField>
+
+<ParamField path="_callback_context" type="Object">
+  Optional context for the callback execution
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Keyword arguments to pass to the callback
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The result of the callback execution, or nil if the callback doesn't run
+</ResponseField>
+
+### exclusive?
+
+Checks if the callback is exclusive to its source.
+
+```ruby
+callback.exclusive?
+```
+
+<ResponseField name="return" type="Boolean">
+  Returns true if only the original source can trigger this callback
+</ResponseField>
+
+### source_location
+
+Returns the source location of the callback for debugging.
+
+```ruby
+callback.source_location
+```
+
+<ResponseField name="return" type="Array">
+  Returns [file_path, line_number] for proc callbacks, or a descriptive array for symbol callbacks
+</ResponseField>
+
+### to_proc
+
+Converts the callback to a proc.
+
+```ruby
+callback.to_proc
+```
+
+<ResponseField name="return" type="Proc">
+  Returns a proc that can be used with the `&` operator
+</ResponseField>
+
+## Attributes
+
+<ResponseField name="event_name" type="Symbol">
+  The name of the event this callback responds to
+</ResponseField>
+
+<ResponseField name="block" type="Proc | Symbol">
+  The callback implementation (proc or method symbol)
+</ResponseField>
+
+<ResponseField name="target" type="Object">
+  The object that owns this callback
+</ResponseField>
+
+<ResponseField name="filters" type="Hash">
+  The filters that determine when this callback can run
+</ResponseField>
+
+## Constants
+
+<ResponseField name="EXCLUSIVE_ARGUMENT" type="Symbol">
+  The keyword argument key used to control exclusivity: `:exclusive_callback`
+</ResponseField>
+
+## Argument Injection
+
+Callbacks support automatic argument injection based on configuration:
+
+- **Named arguments**: When `callback_inject_named_arguments` is enabled, keyword parameters are automatically injected from the event data
+- **Positional arguments**: When `callback_inject_arguments` is enabled, positional parameters are injected by name from the event
+
+## Filters
+
+Callbacks can be filtered using event filters. All filters must pass for the callback to execute. Filters are evaluated using `instance_exec` on the target with the filter options and event.

@@ -1,0 +1,659 @@
+---
+title: Schema
+description: GraphQL Schema class for defining and managing GraphQL schemas with namespace support
+---
+
+## Overview
+
+The `Rails::GraphQL::Schema` class is the core representation of a GraphQL schema. Each schema is associated with a single namespace and manages QueryFields, Mutations, and Subscriptions.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Includes:**
+- `ActiveSupport::Configurable`
+- `ActiveSupport::Rescuable`
+- `Helpers::Instantiable`
+
+**Extends:**
+- `Helpers::WithSchemaFields`
+- `Helpers::WithDirectives`
+- `Helpers::WithGlobalID`
+- `Helpers::Registerable`
+- `GraphQL::Introspection`
+
+---
+
+## Class Methods
+
+### find
+
+Find a schema associated with a namespace (soft mode).
+
+<ParamField path="namespace" type="Symbol" required>
+  The namespace to search for
+</ParamField>
+
+**Returns:** `Schema` or `nil`
+
+```ruby
+schema = Rails::GraphQL::Schema.find(:api)
+```
+
+---
+
+### find!
+
+Find a schema associated with a namespace. Raises an exception if not found.
+
+<ParamField path="namespace" type="Symbol" required>
+  The namespace to search for
+</ParamField>
+
+**Returns:** `Schema`
+
+**Raises:** `NameError` if schema not found
+
+```ruby
+schema = Rails::GraphQL::Schema.find!(:api)
+```
+
+---
+
+### namespace
+
+Get or set the namespace for the schema.
+
+<ParamField path="ns" type="Symbol">
+  The namespace to assign
+</ParamField>
+
+<ParamField path="mod" type="Module">
+  Optional module to associate with the namespace
+</ParamField>
+
+**Returns:** `Symbol` - The current namespace (defaults to `:base`)
+
+```ruby
+class ApiSchema < Rails::GraphQL::Schema
+  namespace :api
+end
+
+# Get the namespace
+ApiSchema.namespace # => :api
+```
+
+---
+
+### types
+
+Find all types available for the current schema.
+
+<ParamField path="base_class" type="Symbol" default=":Type">
+  The base class to filter types by
+</ParamField>
+
+<ParamField path="block" type="Block">
+  Optional block to iterate over types
+</ParamField>
+
+```ruby
+schema.types do |type|
+  puts type.gql_name
+end
+```
+
+---
+
+### find_type
+
+Find a type associated with the schema.
+
+<ParamField path="type" type="Symbol | String" required>
+  The type to find
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional options (base_class, namespaces)
+</ParamField>
+
+**Returns:** Type or `nil`
+
+```ruby
+user_type = schema.find_type(:User)
+```
+
+---
+
+### find_type!
+
+Find a type associated with the schema. Raises an exception if not found.
+
+<ParamField path="type" type="Symbol | String" required>
+  The type to find
+</ParamField>
+
+**Returns:** Type
+
+**Raises:** Exception if type not found
+
+```ruby
+user_type = schema.find_type!(:User)
+```
+
+---
+
+### find_directive!
+
+Find a directive associated with the schema.
+
+<ParamField path="directive" type="Symbol | String" required>
+  The directive to find
+</ParamField>
+
+**Returns:** Directive
+
+**Raises:** Exception if directive not found
+
+```ruby
+directive = schema.find_directive!(:deprecated)
+```
+
+---
+
+### request
+
+Create a new request instance for this schema.
+
+**Returns:** `Rails::GraphQL::Request`
+
+```ruby
+request = schema.request
+```
+
+---
+
+### execute
+
+Shortcut to execute a GraphQL request.
+
+<ParamField path="args" type="Array">
+  Arguments passed to the request
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional execution options
+</ParamField>
+
+**Returns:** Execution result
+
+```ruby
+result = schema.execute(document, variables: { id: 1 })
+```
+
+**Alias:** `perform`
+
+---
+
+### validate
+
+Validate the schema. Only runs if not already validated.
+
+```ruby
+schema.validate
+```
+
+---
+
+### validate!
+
+Force validation of the schema.
+
+```ruby
+schema.validate!
+```
+
+---
+
+### valid?
+
+Check if the schema has been validated.
+
+**Returns:** `Boolean`
+
+```ruby
+schema.valid? # => true
+```
+
+---
+
+## Subscription Methods
+
+### subscription_provider
+
+Return the subscription provider for the current schema.
+
+**Returns:** Subscription provider instance
+
+```ruby
+provider = schema.subscription_provider
+```
+
+---
+
+### add_subscriptions
+
+Add new subscriptions using provided request subscription objects.
+
+<ParamField path="subscriptions" type="Array" required>
+  Request subscription objects to add
+</ParamField>
+
+```ruby
+schema.add_subscriptions(subscription1, subscription2)
+```
+
+---
+
+### remove_subscriptions
+
+Remove subscriptions by their subscription IDs.
+
+<ParamField path="sids" type="Array" required>
+  Subscription IDs to remove
+</ParamField>
+
+```ruby
+schema.remove_subscriptions('sub-123', 'sub-456')
+```
+
+---
+
+### accepts_subscription?
+
+Check if the given operation can be subscribed to.
+
+<ParamField path="operation" type="Object" required>
+  The operation to check
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+schema.accepts_subscription?(operation) # => true
+```
+
+---
+
+### subscription_id_for
+
+Generate a subscription ID. By default, produces a random UUID.
+
+**Returns:** `String` - UUID
+
+```ruby
+id = schema.subscription_id_for(subscription) # => "550e8400-e29b-41d4-a716-446655440000"
+```
+
+---
+
+## Cache Methods
+
+### cached?
+
+Check if a value exists in the schema cache.
+
+<ParamField path="name" type="String" required>
+  Cache key name
+</ParamField>
+
+<ParamField path="options" type="Hash">
+  Cache options
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+schema.cached?('query-hash') # => true
+```
+
+---
+
+### read_from_cache
+
+Read a value from the schema cache.
+
+<ParamField path="name" type="String" required>
+  Cache key name
+</ParamField>
+
+**Returns:** Cached value or `nil`
+
+```ruby
+value = schema.read_from_cache('query-hash')
+```
+
+---
+
+### write_on_cache
+
+Write a value to the schema cache.
+
+<ParamField path="name" type="String" required>
+  Cache key name
+</ParamField>
+
+<ParamField path="value" type="Any" required>
+  Value to cache
+</ParamField>
+
+<ParamField path="options" type="Hash">
+  Cache options
+</ParamField>
+
+```ruby
+schema.write_on_cache('query-hash', compiled_query)
+```
+
+---
+
+### fetch_from_cache
+
+Fetch a value from cache, executing the block if not found.
+
+<ParamField path="name" type="String" required>
+  Cache key name
+</ParamField>
+
+```ruby
+value = schema.fetch_from_cache('key') { compute_value }
+```
+
+---
+
+### delete_from_cache
+
+Delete a value from the schema cache.
+
+<ParamField path="name" type="String" required>
+  Cache key name
+</ParamField>
+
+```ruby
+schema.delete_from_cache('query-hash')
+```
+
+---
+
+## Type Creation Methods
+
+### create_type
+
+Create a new type dynamically without defining a separate class.
+
+<ParamField path="name" type="String | Symbol" required>
+  Name of the type
+</ParamField>
+
+<ParamField path="superclass" type="Symbol">
+  Base type (e.g., :Object, :Interface)
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional type options
+</ParamField>
+
+<ParamField path="block" type="Block">
+  Configuration block
+</ParamField>
+
+```ruby
+schema.create_type(:Address, :Object) do
+  field :street, :string
+  field :city, :string
+end
+```
+
+---
+
+### source
+
+Create a single source type.
+
+<ParamField path="object" type="Class" required>
+  The source object/model
+</ParamField>
+
+<ParamField path="superclass" type="Class">
+  Superclass for the source
+</ParamField>
+
+<ParamField path="build" type="Boolean" default="true">
+  Whether to build immediately
+</ParamField>
+
+```ruby
+schema.source(User, build: true)
+```
+
+---
+
+### sources
+
+Create multiple source types of the same base type.
+
+<ParamField path="list" type="Array" required>
+  List of source objects
+</ParamField>
+
+<ParamField path="of_type" type="Class">
+  Base type for all sources
+</ParamField>
+
+<ParamField path="build" type="Boolean" default="true">
+  Whether to build immediately
+</ParamField>
+
+```ruby
+schema.sources(User, Post, Comment, of_type: ActiveRecordSource)
+```
+
+---
+
+## Loading Methods
+
+### load_directory
+
+Load all files in a directory as dependencies.
+
+<ParamField path="dir" type="String" default=".">
+  Directory path
+</ParamField>
+
+<ParamField path="recursive" type="Boolean" default="true">
+  Whether to load recursively
+</ParamField>
+
+```ruby
+class ApiSchema < Rails::GraphQL::Schema
+  load_directory '../types'
+end
+```
+
+**Alias:** `load_current_directory`
+
+---
+
+### load_dependencies
+
+Load a list of known dependencies.
+
+<ParamField path="type" type="Symbol" required>
+  Type of dependencies (:directive, :source, etc.)
+</ParamField>
+
+<ParamField path="list" type="Array" required>
+  List of dependencies to load
+</ParamField>
+
+```ruby
+schema.load_dependencies(:directive, :deprecated, :skip)
+```
+
+---
+
+### load_directives
+
+Load directive dependencies.
+
+<ParamField path="list" type="Array" required>
+  List of directives to load
+</ParamField>
+
+```ruby
+schema.load_directives(:deprecated, :skip, :include)
+```
+
+---
+
+### load_sources
+
+Load source dependencies.
+
+<ParamField path="list" type="Array" required>
+  List of sources to load
+</ParamField>
+
+<ParamField path="build" type="Boolean" default="false">
+  Whether to build sources immediately
+</ParamField>
+
+```ruby
+schema.load_sources(:user, :post, build: true)
+```
+
+---
+
+## Configuration Options
+
+<Expandable title="Configuration Settings">
+
+The schema inherits configuration from `Rails::GraphQL.config` with the following keys:
+
+<ResponseField name="enable_introspection" type="Boolean">
+  Enable GraphQL introspection queries
+</ResponseField>
+
+<ResponseField name="request_strategies" type="Array">
+  Available request execution strategies
+</ResponseField>
+
+<ResponseField name="enable_string_collector" type="Boolean">
+  Enable optimized string collection for responses
+</ResponseField>
+
+<ResponseField name="default_response_format" type="Symbol">
+  Default format for responses (:string, :hash, :json)
+</ResponseField>
+
+<ResponseField name="schema_type_names" type="Hash">
+  Custom type name mappings
+</ResponseField>
+
+<ResponseField name="cache" type="ActiveSupport::Cache::Store">
+  Cache store instance
+</ResponseField>
+
+<ResponseField name="default_subscription_provider" type="String | Class">
+  Default subscription provider
+</ResponseField>
+
+<ResponseField name="default_subscription_broadcastable" type="Boolean">
+  Enable subscription broadcasting by default
+</ResponseField>
+
+</Expandable>
+
+---
+
+## Introspection
+
+### gql_name
+
+The GraphQL name for schemas is always `__Schema`.
+
+**Returns:** `String`
+
+```ruby
+schema.gql_name # => "__Schema"
+```
+
+**Alias:** `graphql_name`
+
+---
+
+### kind
+
+The kind of object, always `:schema`.
+
+**Returns:** `Symbol`
+
+```ruby
+schema.kind # => :schema
+```
+
+**Alias:** `to_sym`
+
+---
+
+### to_gql
+
+Describe the schema as a GraphQL SDL string.
+
+<ParamField path="xargs" type="Hash">
+  Options for SDL generation
+</ParamField>
+
+**Returns:** `String` - GraphQL SDL
+
+```ruby
+sdl = schema.to_gql
+puts sdl
+```
+
+---
+
+## Example Usage
+
+```ruby
+class ApiSchema < Rails::GraphQL::Schema
+  namespace :api
+
+  # Load types from directory
+  load_directory '../types'
+
+  # Load directives
+  load_directives :deprecated, :cached
+
+  # Define a query field
+  field :user, :User do
+    argument :id, :id, null: false
+  end
+
+  # Define a mutation
+  mutation :create_user, :User do
+    argument :name, :string, null: false
+    argument :email, :string, null: false
+  end
+
+  # Configure
+  config.enable_introspection = true
+  config.default_response_format = :json
+end
+
+# Execute a query
+result = ApiSchema.execute(
+  query,
+  variables: { id: 1 },
+  context: { current_user: user }
+)
+```

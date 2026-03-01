@@ -1,0 +1,345 @@
+---
+title: Schemas
+description: Define and configure your GraphQL schema with queries, mutations, and subscriptions
+---
+
+Schemas are the foundation of your GraphQL API. A schema defines what operations are available, coordinates features, and manages dependencies.
+
+```graphql
+schema {
+  query: _Query
+  mutation: _Mutation
+  subscription: _Subscription
+}
+```
+
+## Defining a Schema
+
+Create your schema by extending the `GraphQL::Schema` class:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Schema configuration goes here
+  end
+end
+```
+
+Each schema is associated with a single namespace. By default, schemas use the `:base` namespace:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Set a custom namespace
+    namespace :api
+    
+    # Associate a module with the namespace
+    namespace :api, GraphQL
+  end
+end
+```
+
+## Configuration
+
+Schemas inherit global settings but can override them at the schema level:
+
+<CodeGroup>
+```ruby Direct Assignment
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    config.enable_string_collector = false
+    config.enable_introspection = true
+  end
+end
+```
+
+```ruby Block Approach
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    configure do |config|
+      config.enable_string_collector = false
+      config.enable_introspection = true
+    end
+  end
+end
+```
+</CodeGroup>
+
+### Available Settings
+
+- `cache` - Cache store for the schema
+- `enable_introspection` - Enable GraphQL introspection queries
+- `request_strategies` - Custom request processing strategies
+- `enable_string_collector` - Optimize string operations
+- `default_response_format` - JSON format for responses
+- `schema_type_names` - Type naming configuration
+- `default_subscription_provider` - Provider for subscriptions
+- `default_subscription_broadcastable` - Broadcast subscription updates
+- `subscription_provider` - Manual provider instance (schema-only)
+
+## Schema Fields
+
+Schemas organize fields into three groups: queries, mutations, and subscriptions.
+
+<Tabs>
+  <Tab title="Query Fields">
+    ```ruby app/graphql/app_schema.rb
+    module GraphQL
+      class AppSchema < GraphQL::Schema
+        query_fields do
+          field :user, 'User', null: false
+          field :users, 'User', array: true
+        end
+      end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Mutation Fields">
+    ```ruby app/graphql/app_schema.rb
+    module GraphQL
+      class AppSchema < GraphQL::Schema
+        mutation_fields do
+          field :create_user, 'User', null: false
+          field :update_user, 'User', null: false
+        end
+      end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Subscription Fields">
+    ```ruby app/graphql/app_schema.rb
+    module GraphQL
+      class AppSchema < GraphQL::Schema
+        subscription_fields do
+          field :user_updated, 'User'
+        end
+      end
+    end
+    ```
+  </Tab>
+</Tabs>
+
+<Info>
+  For larger applications, consider using [alternatives](/guides/alternatives) or [field lists](/guides/field-lists) to organize fields in separate files.
+</Info>
+
+## Loading Dependencies
+
+Inform the Type Map about files that should be loaded before validation.
+
+### Known Dependencies
+
+Load types provided by gems that aren't loaded by default:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Load scalar dependencies
+    load_scalars :bigint, :date_time, :json
+    
+    # Alternative syntax
+    load_dependencies :scalar, :bigint, :date_time
+    
+    # Load directive dependencies
+    load_directives :custom_directive
+  end
+end
+```
+
+### Local Dependencies
+
+Load local directories containing your types:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Load one directory recursively
+    load_directory 'objects'
+    
+    # Load non-recursively
+    load_directory 'objects', recursive: false
+    
+    # Load multiple directories
+    load_directory 'objects', 'inputs', 'enums'
+    
+    # Load current directory
+    load_current_directory
+  end
+end
+```
+
+### Importing Fields
+
+Import fields defined in separate classes or modules:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Import a single field
+    import_into :query, GraphQL::Queries::Sample
+    
+    # Import all fields from a module
+    import_all GraphQL::Queries
+    
+    # Import recursively
+    import_all GraphQL::Queries, recursive: true
+  end
+end
+```
+
+## Inline Type Creation
+
+For simple schemas or testing, you can define types directly in the schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    enum 'Episode' do
+      desc 'One of the films in the Star Wars Trilogy'
+      
+      add 'NEW_HOPE', desc: 'Released in 1977.'
+      add 'EMPIRE', desc: 'Released in 1980.'
+      add 'JEDI', desc: 'Released in 1983.'
+    end
+    
+    object 'Human' do
+      desc 'A humanoid creature in the Star Wars universe'
+      
+      field :id, null: false, desc: 'The id of the human'
+      field :name, desc: 'The name of the human'
+    end
+  end
+end
+```
+
+<Warning>
+  This approach is recommended only for small schemas or testing. For production applications, organize types in separate files.
+</Warning>
+
+## Error Handling with rescue_from
+
+Schemas implement `ActiveSupport::Rescuable` for exception handling:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    rescue_from ActiveRecord::RecordNotFound do |exception|
+      # Access the error message
+      exception.message
+      
+      # Access the source field
+      exception.source
+      
+      # Access the running request
+      exception.request
+    end
+    
+    rescue_from ActiveRecord::RecordInvalid do |exception|
+      # Return custom error response
+      { errors: [{ message: exception.message }] }
+    end
+  end
+end
+```
+
+The default implementation in `lib/rails/graphql/schema.rb` shows handling persisted queries:
+
+```ruby
+rescue_from(PersistedQueryNotFound) do |error|
+  response = { errors: [{ message: +'PersistedQueryNotFound' }] }
+  error.request.force_response(response, error)
+end
+```
+
+## Multiple Schemas
+
+You can define multiple schemas in your application, each with its own namespace:
+
+```ruby app/graphql/admin_schema.rb
+module GraphQL
+  class AdminSchema < GraphQL::Schema
+    namespace :admin
+    
+    query_fields do
+      field :admin_users, 'User', array: true
+    end
+  end
+end
+```
+
+```ruby app/graphql/public_schema.rb
+module GraphQL
+  class PublicSchema < GraphQL::Schema
+    namespace :public
+    
+    query_fields do
+      field :public_posts, 'Post', array: true
+    end
+  end
+end
+```
+
+<Info>
+  Each schema must be assigned to a unique namespace. Attempting to register multiple schemas to the same namespace will raise an `ArgumentError`.
+</Info>
+
+## Executing Requests
+
+Execute GraphQL requests through your schema:
+
+```ruby
+# Create a request object
+request = GraphQL::AppSchema.request
+
+# Execute directly
+result = GraphQL::AppSchema.execute(query_string, variables: {}, context: {})
+
+# Alternative syntax
+result = GraphQL::AppSchema.perform(query_string, variables: {}, context: {})
+```
+
+## Type Map Interaction
+
+Schemas provide shortcuts for interacting with the Type Map:
+
+```ruby
+# Find a type (returns nil if not found)
+GraphQL::AppSchema.find_type(:string)
+
+# Find a type (raises exception if not found)
+GraphQL::AppSchema.find_type!(:user)
+
+# Find a directive
+GraphQL::AppSchema.find_directive!('deprecated')
+
+# Iterate over all types
+GraphQL::AppSchema.types do |type|
+  puts type.gql_name
+end
+```
+
+## Schema Introspection
+
+Get a GraphQL SDL representation of your schema:
+
+```ruby
+# Print the entire schema in GraphQL syntax
+puts GraphQL::AppSchema.to_gql
+```
+
+## API Reference
+
+Key methods available on schema classes:
+
+- `namespace` / `namespace=` - Get/set the schema namespace
+- `validate` / `validate!` - Validate schema definition
+- `registered?` - Check if schema is registered
+- `find_type` / `find_type!` - Find types in the schema
+- `execute` / `perform` - Execute GraphQL requests
+- `subscription_provider` - Get the subscription provider
+- `add_subscriptions` - Add new subscriptions
+- `remove_subscriptions` - Remove subscriptions by ID
+- `cached?` - Check if value exists in cache
+- `read_from_cache` / `write_on_cache` - Cache operations

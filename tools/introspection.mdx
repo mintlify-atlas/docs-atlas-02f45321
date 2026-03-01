@@ -1,0 +1,323 @@
+---
+title: Introspection
+description: Query your GraphQL schema structure with introspection fields and types
+---
+
+Introspection is GraphQL's built-in mechanism for discovering schema structure. It provides fields, objects, and enums that describe everything your schema contains. Tools use introspection for code generation, IDE autocompletion, and schema visualization.
+
+## Enabling Introspection
+
+There are three ways to enable introspection in your schema:
+
+<Steps>
+  <Step title="Global Configuration">
+    Set the global `enable_introspection` setting:
+    
+    ```ruby config/initializers/graphql.rb
+    Rails::GraphQL.configure do |config|
+      config.enable_introspection = !Rails.env.production?
+    end
+    ```
+  </Step>
+  
+  <Step title="Schema Configuration">
+    Configure it directly in your schema:
+    
+    ```ruby app/graphql/app_schema.rb
+    class AppSchema < GraphQL::Schema
+      config.enable_introspection = !Rails.env.production?
+    end
+    ```
+  </Step>
+  
+  <Step title="Programmatic Method">
+    Call `enable_introspection!` in your schema:
+    
+    ```ruby app/graphql/app_schema.rb
+    class AppSchema < GraphQL::Schema
+      enable_introspection!
+    end
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+You should **always disable introspection in production environments**. Otherwise, malicious users can exploit it to discover your entire API structure and potentially misuse your application.
+</Warning>
+
+## Introspection Fields
+
+When introspection is enabled, two special fields are added to your schema's query type:
+
+### `__schema`
+
+Returns information about the entire schema.
+
+```graphql
+query {
+  __schema {
+    types {
+      name
+      kind
+    }
+    queryType {
+      name
+    }
+    mutationType {
+      name
+    }
+  }
+}
+```
+
+**Type:** `__Schema!` (non-null)
+
+**Implementation:** The field is added in `lib/rails/graphql/introspection.rb:34-36`:
+
+```ruby
+safe_add_field(:query, :__schema, '__Schema', null: false) do
+  resolve { schema }
+end
+```
+
+### `__type`
+
+Looks up a specific type by name.
+
+```graphql
+query {
+  __type(name: "User") {
+    name
+    kind
+    fields {
+      name
+      type {
+        name
+      }
+    }
+  }
+}
+```
+
+**Arguments:**
+- `name` (String!, required) - The name of the type to find
+
+**Type:** `__Type` (nullable)
+
+**Implementation:** The field is added in `lib/rails/graphql/introspection.rb:38-41`:
+
+```ruby
+safe_add_field(:query, :__type, '__Type') do
+  argument(:name, :string, null: false)
+  resolve { schema.find_type(argument(:name)) }
+end
+```
+
+## Introspection Types
+
+The following special types are available when introspection is enabled:
+
+### `__Schema`
+
+Describes the schema's structure.
+
+<ResponseField name="types" type="[__Type!]!">
+  All types known to the schema
+</ResponseField>
+
+<ResponseField name="queryType" type="__Type!">
+  The object containing query fields
+</ResponseField>
+
+<ResponseField name="mutationType" type="__Type">
+  The object containing mutation fields
+</ResponseField>
+
+<ResponseField name="subscriptionType" type="__Type">
+  The object containing subscription fields
+</ResponseField>
+
+<ResponseField name="directives" type="[__Directive!]!">
+  All directives known to the schema
+</ResponseField>
+
+### `__Type`
+
+Describes any type (enums, inputs, interfaces, objects, scalars, unions).
+
+<ResponseField name="kind" type="__TypeKind!">
+  The category of this type
+</ResponseField>
+
+<ResponseField name="name" type="String">
+  The GraphQL name of this type
+</ResponseField>
+
+<ResponseField name="description" type="String">
+  The documentation string
+</ResponseField>
+
+<ResponseField name="fields" type="[__Field!]">
+  Output fields (objects and interfaces only)
+</ResponseField>
+
+<ResponseField name="interfaces" type="[__Type!]">
+  Implemented interfaces (objects only)
+</ResponseField>
+
+<ResponseField name="possibleTypes" type="[__Type!]">
+  Possible implementations (interfaces and unions only)
+</ResponseField>
+
+<ResponseField name="enumValues" type="[__EnumValue!]">
+  Available values (enums only)
+</ResponseField>
+
+<ResponseField name="inputFields" type="[__InputValue!]">
+  Input fields (input objects only)
+</ResponseField>
+
+<ResponseField name="ofType" type="__Type">
+  The underlying wrapped type (for lists and non-nulls)
+</ResponseField>
+
+### `__Field`
+
+Describes an output field on an object or interface.
+
+<ResponseField name="name" type="String!">
+  The GraphQL name
+</ResponseField>
+
+<ResponseField name="description" type="String">
+  The documentation string
+</ResponseField>
+
+<ResponseField name="args" type="[__InputValue!]!">
+  Arguments accepted by the field
+</ResponseField>
+
+<ResponseField name="type" type="__Type!">
+  The return type
+</ResponseField>
+
+<ResponseField name="isDeprecated" type="Boolean!">
+  Whether the field is deprecated
+</ResponseField>
+
+<ResponseField name="deprecationReason" type="String">
+  Deprecation reason, if any
+</ResponseField>
+
+### `__InputValue`
+
+Describes an argument or input field.
+
+<ResponseField name="name" type="String!">
+  The GraphQL name
+</ResponseField>
+
+<ResponseField name="description" type="String">
+  The documentation string
+</ResponseField>
+
+<ResponseField name="type" type="__Type!">
+  The accepted type
+</ResponseField>
+
+<ResponseField name="defaultValue" type="String">
+  Default value as a JSON string
+</ResponseField>
+
+### `__EnumValue`
+
+Describes a value within an enum.
+
+<ResponseField name="name" type="String!">
+  The GraphQL name
+</ResponseField>
+
+<ResponseField name="description" type="String">
+  The documentation string
+</ResponseField>
+
+<ResponseField name="isDeprecated" type="Boolean!">
+  Whether the value is deprecated
+</ResponseField>
+
+<ResponseField name="deprecationReason" type="String">
+  Deprecation reason, if any
+</ResponseField>
+
+### `__Directive`
+
+Describes a directive.
+
+<ResponseField name="name" type="String!">
+  The GraphQL name
+</ResponseField>
+
+<ResponseField name="description" type="String">
+  The documentation string
+</ResponseField>
+
+<ResponseField name="locations" type="[__DirectiveLocation!]!">
+  Valid locations for this directive
+</ResponseField>
+
+<ResponseField name="args" type="[__InputValue!]!">
+  Arguments accepted by the directive
+</ResponseField>
+
+<ResponseField name="isRepeatable" type="Boolean!">
+  Whether the directive can be used multiple times
+</ResponseField>
+
+## Introspection Enums
+
+### `__TypeKind`
+
+Enumerates the fundamental GraphQL type categories.
+
+```
+SCALAR | OBJECT | INTERFACE | UNION | ENUM | INPUT_OBJECT | LIST | NON_NULL
+```
+
+### `__DirectiveLocation`
+
+Enumerates valid directive placement locations.
+
+```
+QUERY | MUTATION | SUBSCRIPTION | FIELD | FRAGMENT_DEFINITION |
+FRAGMENT_SPREAD | INLINE_FRAGMENT | SCHEMA | SCALAR | OBJECT |
+FIELD_DEFINITION | ARGUMENT_DEFINITION | INTERFACE | UNION |
+ENUM | ENUM_VALUE | INPUT_OBJECT | INPUT_FIELD_DEFINITION
+```
+
+## Implementation Details
+
+Introspection is implemented in the `Rails::GraphQL::Introspection` module (`lib/rails/graphql/introspection.rb:6`):
+
+```ruby
+module Rails::GraphQL::Introspection
+  def enable_introspection!
+    redefine_singleton_method(:introspection?) { true }
+    introspection_dependencies!
+
+    safe_add_field(:query, :__schema, '__Schema', null: false) do
+      resolve { schema }
+    end
+
+    safe_add_field(:query, :__type, '__Type') do
+      argument(:name, :string, null: false)
+      resolve { schema.find_type(argument(:name)) }
+    end
+  end
+end
+```
+
+The introspection types are lazily loaded from `lib/rails/graphql/type/` when introspection is enabled.
+
+<Note>
+You can get the schema structure using the `to_gql` output from your controller's describe action. See the controller customization guide for details.
+</Note>

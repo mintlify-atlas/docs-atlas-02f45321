@@ -1,0 +1,672 @@
+---
+title: Field
+description: GraphQL Field class for defining fields on types with arguments, nullability, and directives
+---
+
+## Overview
+
+The `Rails::GraphQL::Field` class represents fields in GraphQL types. Fields can be input fields (arguments) or output fields (on objects, interfaces, queries, mutations, subscriptions).
+
+**Namespace:** `Rails::GraphQL`
+
+**Includes:**
+- `Helpers::WithDirectives`
+- `Helpers::WithDescription`
+
+**Subclasses:**
+- `InputField` - Fields on input objects
+- `OutputField` - Fields on output types
+- `MutationField` - Fields for mutations
+- `SubscriptionField` - Fields for subscriptions
+
+---
+
+## Constructor
+
+### initialize
+
+<ParamField path="name" type="String | Symbol" required>
+  The name of the field
+</ParamField>
+
+<ParamField path="owner" type="Type" required>
+  The type that owns this field
+</ParamField>
+
+<ParamField path="null" type="Boolean" default="true">
+  Whether the field value can be null
+</ParamField>
+
+<ParamField path="array" type="Boolean" default="false">
+  Whether the field returns an array
+</ParamField>
+
+<ParamField path="nullable" type="Boolean" default="true">
+  Whether array items can be null (only applies if array: true)
+</ParamField>
+
+<ParamField path="full" type="Boolean" default="false">
+  Shortcut for `null: false, nullable: false, array: true`
+</ParamField>
+
+<ParamField path="enabled" type="Boolean" default="true">
+  Whether the field is enabled
+</ParamField>
+
+<ParamField path="disabled" type="Boolean" default="false">
+  Opposite of enabled (overrides enabled if true)
+</ParamField>
+
+<ParamField path="directives" type="Array">
+  List of directives to apply to the field
+</ParamField>
+
+<ParamField path="desc" type="String">
+  Field description
+</ParamField>
+
+<ParamField path="description" type="String">
+  Field description (alias for desc)
+</ParamField>
+
+<ParamField path="method_name" type="Symbol">
+  Name of the method to call on the object
+</ParamField>
+
+<ParamField path="block" type="Block">
+  Configuration block
+</ParamField>
+
+```ruby
+field = Field.new(:email, owner: User, null: false, desc: 'User email address')
+```
+
+---
+
+## Instance Attributes
+
+<ResponseField name="name" type="Symbol">
+  The Ruby-style name of the field (underscore_case)
+</ResponseField>
+
+<ResponseField name="gql_name" type="String">
+  The GraphQL-style name of the field (camelCase)
+</ResponseField>
+
+<ResponseField name="owner" type="Type">
+  The type that owns this field
+</ResponseField>
+
+**Aliases:**
+- `to_sym` → `name`
+- `gid_base_class` → `owner`
+- `proxied_owner` → `owner`
+
+---
+
+## Class Methods
+
+### input_type?
+
+Check if this field class is valid as an input type.
+
+**Returns:** `Boolean`
+
+```ruby
+InputField.input_type? # => true
+OutputField.input_type? # => false
+```
+
+---
+
+### output_type?
+
+Check if this field class is valid as an output type.
+
+**Returns:** `Boolean`
+
+```ruby
+OutputField.output_type? # => true
+InputField.output_type? # => false
+```
+
+---
+
+### leaf_type?
+
+Check if this field is considered a leaf output.
+
+**Returns:** `Boolean`
+
+---
+
+### proxy?
+
+Check if the field is a proxy kind of field.
+
+**Returns:** `Boolean`
+
+```ruby
+field.class.proxy? # => false
+```
+
+---
+
+### mutation?
+
+Check if the field is associated with a mutation.
+
+**Returns:** `Boolean`
+
+```ruby
+MutationField.mutation? # => true
+```
+
+---
+
+### subscription?
+
+Check if the field is associated with a subscription.
+
+**Returns:** `Boolean`
+
+```ruby
+SubscriptionField.subscription? # => true
+```
+
+---
+
+## Instance Methods
+
+### configure
+
+Apply additional configurations using a block.
+
+<ParamField path="block" type="Block" required>
+  Configuration block
+</ParamField>
+
+**Returns:** `self`
+
+```ruby
+field.configure do
+  desc 'Updated description'
+end
+```
+
+---
+
+### apply_changes
+
+Apply a controlled set of changes to the field.
+
+<ParamField path="nullable" type="Boolean">
+  Update nullable setting
+</ParamField>
+
+<ParamField path="null" type="Boolean">
+  Update null setting
+</ParamField>
+
+<ParamField path="disabled" type="Boolean">
+  Disable the field
+</ParamField>
+
+<ParamField path="enabled" type="Boolean">
+  Enable the field
+</ParamField>
+
+<ParamField path="desc" type="String">
+  Update description
+</ParamField>
+
+<ParamField path="description" type="String">
+  Update description
+</ParamField>
+
+<ParamField path="block" type="Block">
+  Configuration block
+</ParamField>
+
+```ruby
+field.apply_changes(null: false, desc: 'New description')
+```
+
+---
+
+### method_name
+
+Get the name of the method used to retrieve field data.
+
+**Returns:** `Symbol`
+
+```ruby
+field.method_name # => :email
+```
+
+---
+
+### all_owners
+
+Return all owners of the field (always returns single-item array).
+
+**Returns:** `Array<Type>`
+
+```ruby
+field.all_owners # => [User]
+```
+
+---
+
+## State Management Methods
+
+### enable!
+
+Mark the field as enabled.
+
+```ruby
+field.enable!
+```
+
+---
+
+### disable!
+
+Mark the field as disabled.
+
+```ruby
+field.disable!
+```
+
+---
+
+### required!
+
+Mark the field as non-nullable (set null to false).
+
+```ruby
+field.required!
+```
+
+---
+
+### required_items!
+
+Mark array items as non-nullable (set nullable to false).
+
+```ruby
+field.required_items!
+```
+
+---
+
+## Query Methods
+
+### null?
+
+Check if the field value can be null.
+
+**Returns:** `Boolean`
+
+```ruby
+field.null? # => true
+```
+
+---
+
+### required?
+
+Check if the field value cannot be null.
+
+**Returns:** `Boolean`
+
+```ruby
+field.required? # => true
+# Equivalent to: !field.null?
+```
+
+---
+
+### array?
+
+Check if the field returns an array.
+
+**Returns:** `Boolean`
+
+```ruby
+field.array? # => true
+```
+
+---
+
+### nullable?
+
+Check if array items can be null.
+
+**Returns:** `Boolean`
+
+```ruby
+field.nullable? # => true
+```
+
+---
+
+### enabled?
+
+Check if the field is enabled.
+
+**Returns:** `Boolean`
+
+```ruby
+field.enabled? # => true
+```
+
+---
+
+### disabled?
+
+Check if the field is disabled.
+
+**Returns:** `Boolean`
+
+```ruby
+field.disabled? # => false
+```
+
+---
+
+### internal?
+
+Check if the field is internal (name starts with `__`).
+
+**Returns:** `Boolean`
+
+```ruby
+field.internal? # => false
+```
+
+---
+
+### valid_input?
+
+Check if the field is valid for input. Override in subclasses.
+
+**Returns:** `Boolean`
+
+```ruby
+field.valid_input?(value) # => true
+```
+
+---
+
+### valid_output?
+
+Check if the field is valid for output. Override in subclasses.
+
+**Returns:** `Boolean`
+
+```ruby
+field.valid_output?(value) # => true
+```
+
+---
+
+### valid?
+
+Check if the given value is valid (uses valid_input? or valid_output? based on field type).
+
+<ParamField path="value" type="Any" required>
+  Value to validate
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+field.valid?("test@example.com") # => true
+```
+
+---
+
+## Serialization Methods
+
+### to_json
+
+Transform the given value to its JSON string representation. Must be overridden by subclasses.
+
+<ParamField path="value" type="Any" required>
+  Value to serialize
+</ParamField>
+
+**Returns:** `String`
+
+**Raises:** `NotImplementedError` if not overridden
+
+---
+
+### as_json
+
+Turn the given value into a JSON-compatible object. Must be overridden by subclasses.
+
+<ParamField path="value" type="Any" required>
+  Value to serialize
+</ParamField>
+
+**Returns:** JSON-compatible object
+
+**Raises:** `NotImplementedError` if not overridden
+
+---
+
+### deserialize
+
+Convert user input into a Ruby object. Must be overridden by subclasses.
+
+<ParamField path="value" type="Any" required>
+  Input value to deserialize
+</ParamField>
+
+**Returns:** Ruby object
+
+**Raises:** `NotImplementedError` if not overridden
+
+---
+
+## Validation
+
+### validate!
+
+Validate the field definition.
+
+**Raises:** `NameError` if the field name is invalid (starts with `__` but is not internal)
+
+```ruby
+field.validate!
+```
+
+---
+
+## Proxy and Comparison
+
+### to_proxy
+
+Create a proxy of the current field.
+
+<ParamField path="args" type="Array">
+  Arguments for proxy
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional options
+</ParamField>
+
+<ParamField path="block" type="Block">
+  Configuration block
+</ParamField>
+
+**Returns:** `Field` with `ProxiedField` module
+
+```ruby
+proxy_field = field.to_proxy
+```
+
+---
+
+### =~
+
+Check if another field is equivalent.
+
+<ParamField path="other" type="Field" required>
+  Field to compare with
+</ParamField>
+
+**Returns:** `Boolean`
+
+```ruby
+field1 =~ field2 # => true
+```
+
+---
+
+## Description
+
+### description
+
+Get the description of the field.
+
+<ParamField path="namespace" type="Symbol">
+  Namespace for the description
+</ParamField>
+
+**Returns:** `String`
+
+```ruby
+field.description # => "User email address"
+```
+
+---
+
+## Example: Defining Fields
+
+### Output Fields on Object Type
+
+```ruby
+class User < Rails::GraphQL::Type::Object
+  # Simple field
+  field :id, :id, null: false
+
+  # Field with description
+  field :name, :string, null: false, desc: 'Full name of the user'
+
+  # Array field with non-nullable items
+  field :tags, [:string], nullable: false
+
+  # Shortcut for non-null array with non-null items
+  field :permissions, [:string], full: true
+
+  # Field with custom method name
+  field :email_address, :string, method_name: :email
+
+  # Field with directives
+  field :legacy_field, :string, directives: DeprecatedDirective(reason: 'Use newField instead')
+
+  # Field with arguments
+  field :posts, [Post] do
+    argument :limit, :int, default: 10
+    argument :offset, :int, default: 0
+
+    def resolve(limit:, offset:)
+      object.posts.limit(limit).offset(offset)
+    end
+  end
+
+  # Disabled field (not available in schema)
+  field :internal_data, :string, disabled: true
+end
+```
+
+### Input Fields on Input Type
+
+```ruby
+class CreateUserInput < Rails::GraphQL::Type::Input
+  # Required field
+  argument :name, :string, null: false
+
+  # Optional field with description
+  argument :email, :string, desc: 'User email address'
+
+  # Field with default value
+  argument :role, :string, default: 'user'
+
+  # Array field
+  argument :tags, [:string]
+
+  # Nested input type
+  argument :address, AddressInput
+end
+```
+
+### Mutation Fields
+
+```ruby
+class CreateUser < Rails::GraphQL::Type::Mutation
+  # Input arguments
+  argument :name, :string, null: false
+  argument :email, :string, null: false
+
+  # Return type
+  type :User, null: false
+
+  # Resolver
+  def resolve(name:, email:)
+    User.create!(name: name, email: email)
+  end
+end
+```
+
+---
+
+## Field Options Summary
+
+<Expandable title="Complete Field Options Reference">
+
+<ParamField path="null" type="Boolean" default="true">
+  Whether the field value can be null
+</ParamField>
+
+<ParamField path="array" type="Boolean" default="false">
+  Whether the field returns an array
+</ParamField>
+
+<ParamField path="nullable" type="Boolean" default="true">
+  Whether array items can be null (requires array: true)
+</ParamField>
+
+<ParamField path="full" type="Boolean" default="false">
+  Shortcut for `null: false, nullable: false, array: true`
+</ParamField>
+
+<ParamField path="enabled" type="Boolean" default="true">
+  Whether the field is available
+</ParamField>
+
+<ParamField path="disabled" type="Boolean" default="false">
+  Disable the field (opposite of enabled)
+</ParamField>
+
+<ParamField path="directives" type="Array">
+  GraphQL directives to apply
+</ParamField>
+
+<ParamField path="desc" type="String">
+  Field description (shown in introspection)
+</ParamField>
+
+<ParamField path="description" type="String">
+  Field description (alias for desc)
+</ParamField>
+
+<ParamField path="method_name" type="Symbol">
+  Custom method name to call on the object
+</ParamField>
+
+</Expandable>

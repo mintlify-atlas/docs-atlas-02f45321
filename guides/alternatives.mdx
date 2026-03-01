@@ -1,0 +1,168 @@
+---
+title: 'Alternatives'
+description: 'Learn all the alternative ways you can define your GraphQL schema fields in Rails GraphQL'
+---
+
+Rails GraphQL provides multiple approaches to define your schema fields, designed with [SRP](https://en.wikipedia.org/wiki/Single-responsibility_principle) and [DRY](https://en.wikipedia.org/wiki/Don%27t_repeat_yourself) principles in mind. Choose the approach that best fits your field's complexity.
+
+<Note>
+The examples focus on queries, but you can use the same patterns with mutations and subscriptions.
+</Note>
+
+## Direct Definition
+
+Directly defining fields means adding them straight into your schema. This is the simplest approach, best used sparingly for simple, immutable values.
+
+```ruby app/graphql/app_schema.rb
+query_fields do
+  field(:rails_version, :string).resolve { Rails.version }
+end
+```
+
+This works well when there's no complex logic involved:
+
+```ruby app/graphql/app_schema.rb
+query_fields do
+  field(:me, 'User').resolve { context.current_user }
+end
+```
+
+<Warning>
+This approach is not recommended for mutations.
+</Warning>
+
+Read more about [fields](/guides/fields) and [recommendations](/guides/recommendations).
+
+## Set Definition
+
+When multiple fields share common logic, define a class where they can all live together. This allows you to add shared methods and a list of fields, then import the set as a dependency in your schema.
+
+```ruby app/graphql/queries/migrations_set.rb
+class GraphQL::Queries::MigrationsSet < GraphQL::QuerySet
+  field :last_migration, :int, null: false
+  field :all_migrations, :int, null: false, array: true
+  field :needs_migration, :boolean, null: false
+
+  def last_migration
+    context.current_version
+  end
+
+  def all_migrations
+    context.get_all_versions
+  end
+
+  def needs_migration
+    context.needs_migration?
+  end
+
+  private
+
+  def context
+    ActiveRecord::Base.connection.migration_context
+  end
+end
+```
+
+Read more about [local dependencies](/guides/schemas#local-dependencies).
+
+### Available Classes
+
+- `GraphQL::FieldSet`
+- `GraphQL::QuerySet`
+- `GraphQL::MutationSet`
+- `GraphQL::SubscriptionSet`
+
+## Standalone Definition
+
+For complex fields requiring several methods and multiple parts for resolution, define a single class for a single field. This is similar to using [Rails Services](https://www.honeybadger.io/blog/refactor-ruby-rails-service-object/).
+
+```ruby app/graphql/queries/permissions.rb
+class GraphQL::Queries::Permissions < GraphQL::Query
+  desc <<~DESC
+    Returns all the actions that the current user can perform
+    in the given section provided as an argument.
+  DESC
+
+  argument :section, null: false
+  returns :string, array: true
+
+  delegate :current_user, to: :context
+
+  def resolve
+    # Complex resolution logic here
+  end
+end
+```
+
+You'll need to import these classes into your schema.
+
+<Note>
+For mutations, besides the `resolve` method, you also have the `perform` method as an entry point. Read more about it in the [mutations guide](/guides/mutations).
+</Note>
+
+### Available Classes
+
+- `GraphQL::Field`
+- `GraphQL::Query`
+- `GraphQL::Mutation`
+- `GraphQL::Subscription`
+
+## Source Definition
+
+Sources represent the highest level of abstraction. Instead of defining individual elements, you write a translator that can convert other classes into GraphQL components. Once you have the translator, all objects following the same pattern can be handled consistently.
+
+A great example is [ActiveRecord](/guides/sources/active-record), which already has its source implemented in this gem. All your models can be easily turned into their GraphQL counterparts.
+
+<Note>
+Unlike the previous examples, [sources](/guides/sources) don't require importing because they have their own mechanism for publishing fields.
+</Note>
+
+```ruby app/graphql/sources/user_source.rb
+class GraphQL::UserSource < GraphQL::ActiveRecordSource
+  build_all
+end
+```
+
+Or define sources directly in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    source User
+  end
+end
+```
+
+The above will produce:
+
+```graphql
+schema {
+  query: _Query
+  mutation: _Mutation
+}
+
+type _Query {
+  users: [User!]!
+  user(id: ID!): User!
+}
+
+type _Mutation {
+  createUser(user: UserInput!): User!
+  updateUser(id: ID!, user: UserInput!): User!
+  deleteUser(id: ID!): Boolean!
+}
+
+type User {
+  # ... All user fields
+}
+
+input UserInput {
+  # ... All user fields as input
+}
+```
+
+<Check>
+Sources are one of the most powerful features of this gem.
+</Check>
+
+Read more about [sources](/guides/sources).

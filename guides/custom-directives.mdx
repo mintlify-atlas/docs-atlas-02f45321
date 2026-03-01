@@ -1,0 +1,341 @@
+---
+title: Custom Directives
+description: Learn how to create custom directives with events, filters, and lifecycle hooks for advanced GraphQL behavior.
+---
+
+## Overview
+
+Directives in Rails GraphQL allow you to modify the behavior of fields, types, and other schema elements. Custom directives work as event listeners and triggers, enabling powerful runtime modifications to your GraphQL operations.
+
+## Basic Directive Structure
+
+Create a custom directive by inheriting from `Rails::GraphQL::Directive`:
+
+```ruby
+module GraphQL
+  class MyDirective < Rails::GraphQL::Directive
+    placed_on :field_definition
+    
+    desc 'Custom directive description'
+    
+    argument :my_arg, :string, null: false
+  end
+end
+```
+
+## Directive Locations
+
+Directives can be placed on specific schema locations using `placed_on`:
+
+### Execution Locations
+- `:query` - Query operations
+- `:mutation` - Mutation operations
+- `:subscription` - Subscription operations
+- `:field` - Field selections
+- `:fragment_definition` - Fragment definitions
+- `:fragment_spread` - Fragment spreads
+- `:inline_fragment` - Inline fragments
+
+### Definition Locations
+- `:schema` - Schema definition
+- `:scalar` - Scalar types
+- `:object` - Object types
+- `:field_definition` - Field definitions
+- `:argument_definition` - Argument definitions
+- `:interface` - Interface types
+- `:union` - Union types
+- `:enum` - Enum types
+- `:enum_value` - Enum values
+- `:input_object` - Input object types
+- `:input_field_definition` - Input field definitions
+
+```ruby
+class MyDirective < Rails::GraphQL::Directive
+  placed_on :field_definition, :argument_definition
+end
+```
+
+## Directive Arguments
+
+Define arguments for your directive using the `argument` method:
+
+```ruby
+class CachedDirective < Rails::GraphQL::Directive
+  placed_on :query
+  
+  argument :id, :ID, null: false, desc: 'The unique identifier of the cached operation.'
+  argument :ttl, :int, default: 3600, desc: 'Time to live in seconds'
+end
+```
+
+## Event Listeners
+
+Directives can listen to lifecycle events using the `on` method:
+
+### Available Events
+
+- `:attach` - When the directive is attached to an element
+- `:authorize` - During authorization checks
+- `:organized` - After field organization
+- `:prepared` - After preparation phase
+- `:finalize` - During finalization
+- `:query` - Query execution
+- `:mutation` - Mutation execution
+- `:subscription` - Subscription execution
+
+### Basic Event Handler
+
+```ruby
+class SkipDirective < Rails::GraphQL::Directive
+  placed_on :field, :fragment_spread, :inline_fragment
+  
+  argument :if, :boolean, null: false
+  
+  on(:attach) do |source|
+    source.skip! if args[:if]
+  end
+end
+```
+
+## Event Filters
+
+Use event filters to conditionally execute directive logic:
+
+### The `for` Filter
+
+Target specific types:
+
+```ruby
+class DeprecatedDirective < Rails::GraphQL::Directive
+  placed_on :field_definition, :enum_value
+  
+  argument :reason, :string
+  
+  on(:finalize, for: Type::Enum) do |event|
+    return unless event.current_value.deprecated?
+    
+    value = event.current_value.to_s
+    item = "#{value} value for the #{event.source.gql_name} field"
+    event.request.report_error(build_message(item))
+  end
+  
+  private
+  
+  def build_message(item)
+    result = "The #{item} is deprecated"
+    result << ", reason: #{args.reason}" if args.reason.present?
+    result << '.'
+  end
+end
+```
+
+### The `on` Filter
+
+Filter by the event target:
+
+```ruby
+on(:organized, on: SomeType) do |event|
+  # Only runs when the event is on SomeType
+end
+```
+
+### The `during` Filter
+
+Filter by execution phase:
+
+```ruby
+on(:prepared, during: :execution) do |event|
+  # Only runs during execution phase
+end
+```
+
+## Real-World Examples
+
+### Rate Limiting Directive
+
+```ruby
+module GraphQL
+  class RateLimitDirective < Rails::GraphQL::Directive
+    placed_on :field_definition
+    
+    desc 'Limits the rate at which a field can be accessed'
+    
+    argument :max_calls, :int, null: false, desc: 'Maximum calls per window'
+    argument :window, :int, default: 60, desc: 'Time window in seconds'
+    
+    on(:organized) do |event|
+      key = "rate_limit:#{event.request.context[:user_id]}:#{event.field.gql_name}"
+      count = Rails.cache.increment(key, 1, expires_in: args.window.seconds)
+      
+      if count > args.max_calls
+        event.request.report_error(
+          "Rate limit exceeded. Max #{args.max_calls} calls per #{args.window} seconds."
+        )
+      end
+    end
+  end
+end
+```
+
+### Authentication Directive
+
+```ruby
+module GraphQL
+  class AuthDirective < Rails::GraphQL::Directive
+    placed_on :field_definition, :object
+    
+    desc 'Requires authentication to access the field'
+    
+    argument :role, :string, desc: 'Required user role'
+    
+    on(:authorize) do |event|
+      user = event.request.context[:current_user]
+      
+      unless user.present?
+        raise GraphQL::ExecutionError, 'Authentication required'
+      end
+      
+      if args.role.present? && !user.has_role?(args.role)
+        raise GraphQL::ExecutionError, "Required role: #{args.role}"
+      end
+    end
+  end
+end
+```
+
+### Logging Directive
+
+```ruby
+module GraphQL
+  class LogDirective < Rails::GraphQL::Directive
+    placed_on :field_definition
+    
+    desc 'Logs field access and execution time'
+    
+    argument :level, :string, default: 'info'
+    
+    on(:organized) do |event|
+      start_time = Time.current
+      @start_time = start_time
+      
+      Rails.logger.public_send(
+        args.level,
+        "[GraphQL] Accessing field: #{event.field.gql_name}"
+      )
+    end
+    
+    on(:finalize) do |event|
+      duration = ((Time.current - @start_time) * 1000).round(2)
+      
+      Rails.logger.public_send(
+        args.level,
+        "[GraphQL] Field #{event.field.gql_name} completed in #{duration}ms"
+      )
+    end
+  end
+end
+```
+
+## Repeatable Directives
+
+Mark a directive as repeatable to allow multiple instances:
+
+```ruby
+class ValidateDirective < Rails::GraphQL::Directive
+  self.repeatable = true
+  
+  placed_on :argument_definition, :input_field_definition
+  
+  argument :format, :string, null: false
+  argument :message, :string
+end
+```
+
+Usage:
+
+```ruby
+argument :email, :string, directives: [
+  ValidateDirective(format: 'email'),
+  ValidateDirective(format: 'lowercase')
+]
+```
+
+## Using Directives
+
+### On Fields
+
+```ruby
+field :deprecated_field, :string, directives: DeprecatedDirective(reason: 'Use newField instead')
+```
+
+### On Enum Values
+
+```ruby
+enum :status do
+  add :pending
+  add :active
+  add :old_status, directives: DeprecatedDirective(reason: 'Use active instead')
+end
+```
+
+### Shortcut Syntax
+
+```ruby
+# These are equivalent:
+field :name, :string, directives: MyDirective(arg: 'value')
+field :name, :string, directives: MyDirective.new(arg: 'value')
+```
+
+## Accessing Directive Data
+
+Inside directive event handlers:
+
+```ruby
+on(:organized) do |event|
+  # Access directive arguments
+  args.my_argument
+  
+  # Access the field
+  event.field.gql_name
+  
+  # Access the request
+  event.request.context[:current_user]
+  
+  # Access the source type
+  event.source.gql_name
+  
+  # Report errors
+  event.request.report_error('Error message')
+end
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Keep Directives Focused">
+    Each directive should have a single, well-defined purpose. Don't create directives that do too many things.
+  </Accordion>
+  
+  <Accordion title="Use Appropriate Event Listeners">
+    Choose the right lifecycle event for your directive logic. Use `:authorize` for authentication, `:organized` for validation, and `:finalize` for cleanup.
+  </Accordion>
+  
+  <Accordion title="Handle Errors Gracefully">
+    Always provide clear error messages when directive validation fails. Use `event.request.report_error` for user-facing errors.
+  </Accordion>
+  
+  <Accordion title="Document Your Directives">
+    Use the `desc` method to provide clear documentation about what your directive does and how to use it.
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Custom Scalars" icon="hashtag" href="/guides/custom-scalars">
+    Learn how to create custom scalar types
+  </Card>
+  <Card title="Advanced Types" icon="shapes" href="/guides/advanced/types">
+    Explore advanced type system features
+  </Card>
+</CardGroup>

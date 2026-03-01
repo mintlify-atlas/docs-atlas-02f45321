@@ -1,0 +1,485 @@
+---
+title: Authorization
+description: Field-level authorization with authorize callbacks and authorized_field module
+---
+
+## Overview
+
+Rails GraphQL provides field-level authorization through the `authorize` method and the `AuthorizedField` module. Authorization checks run during request execution and can prevent field resolution based on custom logic.
+
+<Info>
+Authorization is separate from authentication. It determines what authenticated users can access.
+</Info>
+
+## Basic Authorization
+
+### Using authorize
+
+Add authorization to any field:
+
+```ruby
+field(:email, :string).authorize do
+  current_user == current_value
+end
+```
+
+<CodeGroup>
+```ruby Block Authorization
+field(:secret_data).authorize do
+  current_user.admin?
+end
+```
+
+```ruby With Arguments
+field(:post).authorize do |id:|
+  Post.find(id).user_id == current_user.id
+end
+```
+
+```ruby Return False to Deny
+field(:delete_user).authorize do
+  unless current_user.can?(:delete, User)
+    request.report_error("Unauthorized")
+    false  # Stops execution
+  end
+end
+```
+</CodeGroup>
+
+### Method Reference
+
+```ruby
+field(:email, :string).authorize(:check_ownership)
+
+def check_ownership
+  current_user.id == current_value.user_id
+end
+```
+
+## AuthorizedField Module
+
+The authorization system is implemented in the `AuthorizedField` module:
+
+```ruby
+# From lib/rails/graphql/field/authorized_field.rb
+module Field::AuthorizedField
+  # Add settings for authorization or a block to execute
+  def authorize(*args, **xargs, &block)
+    @authorizer = [args, xargs, block]
+    self
+  end
+  
+  # Return the settings for the authorize process
+  def authorizer
+    @authorizer if authorizable?
+  end
+  
+  # Checks if the field should go through authorization
+  def authorizable?
+    defined?(@authorizer)
+  end
+end
+```
+
+### Checking Authorization
+
+<CodeGroup>
+```ruby Check if Authorizable
+if field.authorizable?
+  # Field has authorization logic
+end
+```
+
+```ruby Get Authorizer
+args, xargs, block = field.authorizer
+```
+</CodeGroup>
+
+## Authorization Patterns
+
+### Role-Based
+
+<CodeGroup>
+```ruby Simple Roles
+field(:admin_panel).authorize do
+  current_user.role == :admin
+end
+```
+
+```ruby Multiple Roles
+field(:moderation_tools).authorize do
+  [:admin, :moderator].include?(current_user.role)
+end
+```
+
+```ruby Role Hierarchy
+field(:sensitive_data).authorize do
+  current_user.role_level >= 5
+end
+```
+</CodeGroup>
+
+### Ownership-Based
+
+<CodeGroup>
+```ruby Owner Check
+field(:edit_post).authorize do
+  current_value.user_id == current_user.id
+end
+```
+
+```ruby Owner or Admin
+field(:delete_comment).authorize do
+  current_user.admin? || current_value.user_id == current_user.id
+end
+```
+</CodeGroup>
+
+### Permission-Based
+
+<CodeGroup>
+```ruby Single Permission
+field(:publish_post).authorize do
+  current_user.can?(:publish, Post)
+end
+```
+
+```ruby Multiple Permissions
+field(:manage_users).authorize do
+  current_user.can?(:create, User) &&
+  current_user.can?(:update, User) &&
+  current_user.can?(:delete, User)
+end
+```
+
+```ruby Context-Aware
+field(:update_post).authorize do |id:|
+  post = Post.find(id)
+  current_user.can?(:update, post)
+end
+```
+</CodeGroup>
+
+## Integration with Pundit
+
+<CodeGroup>
+```ruby Pundit Policy
+class PostPolicy < ApplicationPolicy
+  def show?
+    user.admin? || record.published?
+  end
+  
+  def update?
+    user.id == record.user_id
+  end
+end
+```
+
+```ruby In Schema
+field(:post).authorize do |id:|
+  post = Post.find(id)
+  PostPolicy.new(current_user, post).show?
+end
+
+field(:update_post).authorize do |id:|
+  post = Post.find(id)
+  authorize(post, :update?)
+end
+```
+
+```ruby Schema Helper
+class AppSchema < GraphQL::Schema
+  def authorize(record, query)
+    policy = Pundit.policy!(current_user, record)
+    policy.public_send(query)
+  end
+  
+  def current_user
+    context[:current_user]
+  end
+end
+```
+</CodeGroup>
+
+## Integration with CanCanCan
+
+<CodeGroup>
+```ruby Ability
+class Ability
+  include CanCan::Ability
+  
+  def initialize(user)
+    user ||= User.new
+    
+    if user.admin?
+      can :manage, :all
+    else
+      can :read, Post, published: true
+      can :update, Post, user_id: user.id
+    end
+  end
+end
+```
+
+```ruby In Schema
+field(:post).authorize do |id:|
+  post = Post.find(id)
+  Ability.new(current_user).can?(:read, post)
+end
+
+field(:update_post).authorize do |id:|
+  post = Post.find(id)
+  Ability.new(current_user).can?(:update, post)
+end
+```
+
+```ruby Schema Helper
+class AppSchema < GraphQL::Schema
+  def current_ability
+    @current_ability ||= Ability.new(current_user)
+  end
+  
+  def can?(action, subject)
+    current_ability.can?(action, subject)
+  end
+end
+
+field(:posts).authorize { can?(:read, Post) }
+```
+</CodeGroup>
+
+## Error Handling
+
+### Unauthorized Errors
+
+<CodeGroup>
+```ruby Simple Denial
+field(:secret).authorize do
+  return false unless current_user.admin?
+end
+```
+
+```ruby With Error Message
+field(:secret).authorize do
+  unless current_user.admin?
+    request.report_error(
+      "Unauthorized",
+      extensions: { code: "FORBIDDEN" }
+    )
+    return false
+  end
+end
+```
+
+```ruby Detailed Errors
+field(:manage_users).authorize do
+  unless current_user.can?(:manage, User)
+    request.report_error(
+      "You don't have permission to manage users",
+      extensions: {
+        code: "FORBIDDEN",
+        required_permission: "manage_users",
+        user_role: current_user.role
+      }
+    )
+    return false
+  end
+end
+```
+</CodeGroup>
+
+### Schema-Level Handler
+
+```ruby
+class AppSchema < GraphQL::Schema
+  rescue_from(UnauthorizedError) do |error|
+    request.report_error(
+      error.message,
+      extensions: {
+        code: "FORBIDDEN",
+        required_role: error.required_role
+      }
+    )
+  end
+end
+
+field(:admin_action).authorize do
+  raise UnauthorizedError.new("Admin required", required_role: :admin) unless current_user.admin?
+end
+```
+
+## Proxy Field Authorization
+
+Proxy fields inherit authorization:
+
+```ruby
+# From lib/rails/graphql/field/authorized_field.rb
+module Proxied
+  def authorizer
+    super || field.authorizer
+  end
+  
+  def authorizable?
+    super || field.authorizable?
+  end
+end
+```
+
+<Info>
+If a proxied field doesn't have its own authorization, it uses the original field's authorization.
+</Info>
+
+## Best Practices
+
+<Card title="Fail Securely" icon="shield-halved">
+  Default to denying access:
+
+  ```ruby
+  field(:sensitive).authorize do
+    return false unless current_user.present?
+    current_user.has_permission?(:view_sensitive)
+  end
+  ```
+</Card>
+
+<Card title="Clear Error Messages" icon="message">
+  Provide helpful error messages:
+
+  ```ruby
+  unless authorized?
+    request.report_error(
+      "You need #{required_role} role to access this",
+      extensions: { code: "FORBIDDEN" }
+    )
+    return false
+  end
+  ```
+</Card>
+
+<Card title="Avoid N+1 Queries" icon="gauge-high">
+  Preload authorization data:
+
+  ```ruby
+  field(:posts).before_resolve do
+    # Preload user abilities
+    @abilities = current_user.abilities.index_by(&:subject_type)
+  end.authorize do
+    @abilities['Post']&.can_read?
+  end
+  ```
+</Card>
+
+<Card title="Use Policy Objects" icon="file-contract">
+  Centralize authorization logic:
+
+  ```ruby
+  field(:post).authorize do |id:|
+    PostPolicy.new(current_user, Post.find(id)).show?
+  end
+  ```
+</Card>
+
+## Testing Authorization
+
+<CodeGroup>
+```ruby RSpec
+RSpec.describe "Post authorization" do
+  let(:admin) { create(:user, :admin) }
+  let(:user) { create(:user) }
+  
+  it "allows admins to view all posts" do
+    result = execute(<<~GQL, user: admin)
+      { posts { id } }
+    GQL
+    
+    expect(result[:errors]).to be_nil
+  end
+  
+  it "denies regular users" do
+    result = execute(<<~GQL, user: user)
+      { adminPosts { id } }
+    GQL
+    
+    expect(result[:errors]).to be_present
+    expect(result[:errors][0][:extensions][:code]).to eq("FORBIDDEN")
+  end
+end
+```
+
+```ruby Minitest
+class AuthorizationTest < ActiveSupport::TestCase
+  test "owner can update their post" do
+    user = users(:john)
+    post = posts(:johns_post)
+    
+    result = GraphQL::AppSchema.execute(<<~GQL, context: { user: user })
+      mutation {
+        updatePost(id: #{post.id}, title: "New") {
+          id
+        }
+      }
+    GQL
+    
+    assert_nil result[:errors]
+  end
+  
+  test "non-owner cannot update post" do
+    user = users(:jane)
+    post = posts(:johns_post)
+    
+    result = GraphQL::AppSchema.execute(<<~GQL, context: { user: user })
+      mutation {
+        updatePost(id: #{post.id}, title: "New") {
+          id
+        }
+      }
+    GQL
+    
+    assert result[:errors].present?
+  end
+end
+```
+</CodeGroup>
+
+## Performance Considerations
+
+<Card title="Batch Authorization" icon="layer-group">
+  Check authorization in bulk:
+
+  ```ruby
+  field(:posts).before_resolve do
+    @post_permissions = current_user
+      .permissions
+      .where(subject_type: 'Post')
+      .index_by(&:subject_id)
+  end
+  
+  field(:post).authorize do |id:|
+    @post_permissions[id]&.can_read?
+  end
+  ```
+</Card>
+
+<Card title="Cache Permissions" icon="database">
+  Cache expensive permission checks:
+
+  ```ruby
+  def can?(action, subject)
+    cache_key = "permission:#{current_user.id}:#{action}:#{subject}"
+    Rails.cache.fetch(cache_key, expires_in: 5.minutes) do
+      current_ability.can?(action, subject)
+    end
+  end
+  ```
+</Card>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Error Handling" icon="triangle-exclamation" href="/advanced/error-handling">
+    Handling authorization errors
+  </Card>
+  <Card title="Events" icon="bolt" href="/advanced/events">
+    Authorization in event callbacks
+  </Card>
+</CardGroup>

@@ -1,0 +1,361 @@
+---
+title: GraphQL Controller Integration
+description: Learn how to integrate GraphQL with Rails controllers using the GraphQL::Controller module for HTTP request handling and authentication.
+---
+
+The `GraphQL::Controller` module provides everything you need to handle GraphQL requests through `ActionController`. It offers flexible hooks for customization including authentication, caching, and request processing.
+
+## Quick Start
+
+Include the `GraphQL::Controller` module in your controller or extend the provided `GraphQL::BaseController`:
+
+<CodeGroup>
+```ruby app/controllers/graphql_controller.rb
+class GraphqlController < ApplicationController
+  include GraphQL::Controller
+  
+  # Specify which schema to use
+  self.gql_schema = GraphQL::AppSchema
+end
+```
+
+```ruby app/controllers/graphql_controller.rb (Alternative)
+class GraphqlController < GraphQL::BaseController
+  # GraphQL::BaseController already includes GraphQL::Controller
+  self.gql_schema = GraphQL::AppSchema
+end
+```
+</CodeGroup>
+
+## Controller Actions
+
+The controller provides three built-in actions:
+
+<Steps>
+  <Step title="Execute GraphQL Queries">
+    `POST /execute` - Executes GraphQL queries and mutations
+    
+    ```ruby
+    # lib/rails/graphql/railties/controller.rb:30-33
+    def execute
+      gql_request_response(gql_query)
+    end
+    ```
+    
+    This action processes the GraphQL query from `params[:query]` and returns a JSON response.
+  </Step>
+  
+  <Step title="Schema Introspection">
+    `GET /describe` - Returns the schema as a GraphQL SDL document
+    
+    ```ruby
+    # lib/rails/graphql/railties/controller.rb:35-42
+    def describe(schema = gql_schema)
+      render plain: [
+        gql_schema_header(schema),
+        gql_describe_schema(schema),
+        gql_schema_footer,
+      ].join
+    end
+    ```
+    
+    Query parameters:
+    - `without_descriptions` - Hide all field descriptions
+    - `without_spec` - Hide default spec types
+  </Step>
+  
+  <Step title="GraphiQL IDE">
+    `GET /graphiql` - Renders the GraphiQL interactive console
+    
+    ```ruby
+    # lib/rails/graphql/railties/controller.rb:44-47
+    def graphiql
+      render '/graphiql', layout: false, locals: { settings: graphiql_settings }
+    end
+    ```
+  </Step>
+</Steps>
+
+## Schema Configuration
+
+Set your GraphQL schema using the `gql_schema` class attribute:
+
+```ruby app/controllers/graphql_controller.rb
+class GraphqlController < ApplicationController
+  include GraphQL::Controller
+  
+  # As a string (lazy loaded)
+  self.gql_schema = 'GraphQL::AppSchema'
+  
+  # Or as a class reference
+  self.gql_schema = GraphQL::AppSchema
+end
+```
+
+<Note>
+  If no schema is specified, the controller will attempt to find a schema matching your application name (e.g., `GraphQL::AppSchema` for an app named `App`).
+</Note>
+
+## Request Handling
+
+The controller processes GraphQL requests through several helper methods:
+
+### Execute a Request
+
+The `gql_request` method (lib/rails/graphql/railties/controller.rb:62-73) executes GraphQL queries:
+
+```ruby
+def gql_request(document, **xargs)
+  request_xargs = REQUEST_XARGS.each_with_object({}) do |setting, result|
+    result[setting] ||= (xargs[setting] || send(:"gql_#{setting}"))
+  end
+
+  request_xargs[:hash] ||= gql_query_cache_key
+  request_xargs[:origin] ||= self
+  request_xargs[:compiled] ||= gql_compiled_request?(document)
+
+  request_xargs = request_xargs.except(*%i[query_cache_key query_cache_version])
+  ::Rails::GraphQL::Request.execute(document, **request_xargs)
+end
+```
+
+Accepted parameters:
+- `operation_name` - Which operation to execute
+- `variables` - Query variables as JSON or Hash
+- `context` - Request context data
+- `schema` - Override the default schema
+- `query_cache_key` - For persisted queries
+
+### Extract Query Parameters
+
+Helper methods extract data from the request params:
+
+<CodeGroup>
+```ruby Query Document
+# lib/rails/graphql/railties/controller.rb:93-97
+def gql_query
+  params[:query]
+end
+```
+
+```ruby Operation Name
+# lib/rails/graphql/railties/controller.rb:105-108
+def gql_operation_name
+  params[:operationName] || params[:operation_name]
+end
+```
+
+```ruby Variables
+# lib/rails/graphql/railties/controller.rb:115-123
+def gql_variables(variables = params[:variables])
+  case variables
+  when ::ActionController::Parameters then variables.permit!.to_h
+  when String then variables.present? ? JSON.parse(variables) : {}
+  when Hash   then variables
+  else {}
+  end
+end
+```
+</CodeGroup>
+
+## Authentication & Context
+
+Override `gql_context` to add authentication and other request-specific data:
+
+```ruby app/controllers/graphql_controller.rb
+class GraphqlController < ApplicationController
+  include GraphQL::Controller
+  
+  protected
+  
+  def gql_context
+    {
+      current_user: current_user,
+      ip_address: request.remote_ip,
+      user_agent: request.user_agent,
+      request_id: request.uuid
+    }
+  end
+end
+```
+
+The context is available throughout query execution:
+
+```ruby app/graphql/types/query_type.rb
+module Types
+  class QueryType < GraphQL::QueryObject
+    field :current_user, Types::UserType
+    
+    def current_user
+      # Access context in resolvers
+      context[:current_user]
+    end
+  end
+end
+```
+
+## Caching & Persisted Queries
+
+Implement query caching using cache keys (lib/rails/graphql/railties/controller.rb:99-103):
+
+```ruby
+def gql_query_cache_key(key = nil, version = nil)
+  return unless (key ||= params[:query_cache_key]).present?
+  CacheKey.new(key, version || params[:query_cache_version])
+end
+```
+
+### Client Usage
+
+```javascript
+fetch('/graphql', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    query_cache_key: 'GetUser',
+    query_cache_version: 'v1',
+    variables: { id: '123' }
+  })
+});
+```
+
+## GraphiQL Configuration
+
+Customize the GraphiQL IDE settings (lib/rails/graphql/railties/controller.rb:125-132):
+
+```ruby app/controllers/graphql_controller.rb
+protected
+
+def graphiql_settings(mode = nil)
+  if mode == :cable
+    { mode: :cable, url: '/cable', channel: 'GraphQL::BaseChannel' }
+  else
+    { mode: :fetch, url: '/graphql' }
+  end
+end
+```
+
+Override for custom endpoints:
+
+```ruby
+def graphiql_settings(mode = nil)
+  {
+    mode: :fetch,
+    url: '/api/graphql',
+    headers: {
+      'X-API-Key': ENV['API_KEY']
+    }
+  }
+end
+```
+
+## Advanced Customization
+
+### Compiled Requests
+
+Enable compiled/persisted queries:
+
+```ruby app/controllers/graphql_controller.rb
+protected
+
+def gql_compiled_request?(document)
+  # Check if request contains a compiled query identifier
+  params[:compiled] == 'true' || document.start_with?('compiled:')
+end
+```
+
+### Multi-Schema Support
+
+Dynamically select schemas based on request:
+
+```ruby app/controllers/graphql_controller.rb
+protected
+
+def gql_schema
+  case request.subdomain
+  when 'admin'
+    GraphQL::AdminSchema
+  when 'api'
+    GraphQL::ApiSchema
+  else
+    GraphQL::AppSchema
+  end
+end
+```
+
+### Rate Limiting
+
+```ruby app/controllers/graphql_controller.rb
+class GraphqlController < ApplicationController
+  include GraphQL::Controller
+  
+  before_action :check_rate_limit
+  
+  private
+  
+  def check_rate_limit
+    key = "graphql:#{current_user&.id || request.remote_ip}"
+    if Rails.cache.read(key).to_i > 100
+      render json: { error: 'Rate limit exceeded' }, status: 429
+    else
+      Rails.cache.increment(key, 1, expires_in: 1.hour)
+    end
+  end
+end
+```
+
+## Routing
+
+Set up routes for your GraphQL controller:
+
+```ruby config/routes.rb
+Rails.application.routes.draw do
+  scope '/graphql' do
+    post   '/execute',  to: 'graphql#execute'
+    get    '/describe', to: 'graphql#describe'
+    get    '/graphiql', to: 'graphql#graphiql'
+  end
+  
+  # Or use a single route
+  post '/graphql', to: 'graphql#execute'
+end
+```
+
+## Error Handling
+
+```ruby app/controllers/graphql_controller.rb
+class GraphqlController < ApplicationController
+  include GraphQL::Controller
+  
+  rescue_from GraphQL::ExecutionError do |exception|
+    render json: {
+      errors: [{ message: exception.message }]
+    }, status: :unprocessable_entity
+  end
+  
+  rescue_from ActiveRecord::RecordNotFound do |exception|
+    render json: {
+      errors: [{ message: 'Record not found' }]
+    }, status: :not_found
+  end
+end
+```
+
+<Warning>
+  The controller automatically adds internal view paths. Ensure GraphiQL assets are properly loaded in production.
+</Warning>
+
+## Helper Reference
+
+| Method | Source | Description |
+|--------|--------|-------------|
+| `gql_schema` | controller.rb:76-90 | Resolves the GraphQL schema |
+| `gql_query` | controller.rb:93-97 | Extracts query from params |
+| `gql_operation_name` | controller.rb:106-108 | Gets operation name |
+| `gql_variables` | controller.rb:116-123 | Parses variables |
+| `gql_context` | controller.rb:111-113 | Builds request context |
+| `gql_request` | controller.rb:62-73 | Executes GraphQL request |
+| `gql_compiled_request?` | controller.rb:52-54 | Checks if compiled |
+| `graphiql_settings` | controller.rb:126-132 | GraphiQL configuration |
+
+For complete customization options, see the [Controller source](https://github.com/virtualshield/rails-graphql/blob/master/lib/rails/graphql/railties/controller.rb).

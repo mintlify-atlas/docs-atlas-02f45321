@@ -1,0 +1,309 @@
+---
+title: 'Source'
+description: 'Abstract base class for GraphQL sources that contain fields, objects, and information delivered to schemas via proxies'
+---
+
+## Overview
+
+Source is an abstract object that can contain fields, objects, and information that are delivered to the relative schemas throughout proxies, ensuring that it still keeps the main ownership of the objects.
+
+Sources are closely related to objects, meaning they are type-based. They generate GraphQL objects, inputs, queries, mutations, and subscriptions based on configuration.
+
+## Class Methods
+
+### find_for!(object)
+
+Find a source for a given object. Raises an exception if none is found.
+
+<ParamField path="object" type="Class | String">
+  The class or class name to find a source for
+</ParamField>
+
+<ResponseField name="return" type="Source">
+  The source class that can handle the given object
+</ResponseField>
+
+```ruby
+UserSource = GraphQL::Source.find_for!(User)
+```
+
+### find_for(object)
+
+Find the first source that can handle the given object using the list of base sources.
+
+<ParamField path="object" type="Class | String">
+  The class or class name to find a source for
+</ParamField>
+
+<ResponseField name="return" type="Source | nil">
+  The source class that can handle the given object, or nil if not found
+</ResponseField>
+
+```ruby
+source = GraphQL::Source.find_for(User)
+```
+
+### step(hook_name, unshift: false, &block)
+
+Add a new description hook. You can use `throw :skip` to skip parent hooks. If the class is already built, the hook executes immediately.
+
+<ParamField path="hook_name" type="Symbol" required>
+  The name of the hook to execute (must be one of: start, object, input, query, mutation, subscription)
+</ParamField>
+
+<ParamField path="unshift" type="Boolean" default="false">
+  Add the hook at the beginning of the list (executes last)
+</ParamField>
+
+<ParamField path="block" type="Proc" required>
+  The block to execute for this hook
+</ParamField>
+
+```ruby
+step(:object) do
+  field :name, :string
+  field :email, :string
+end
+```
+
+### attach_fields!(type = :all, from = self)
+
+Attach all defined schema fields into the schemas using the namespaces configured for the source.
+
+<ParamField path="type" type="Symbol" default=":all">
+  The type of fields to attach (object, input, query, mutation, subscription, or :all)
+</ParamField>
+
+<ParamField path="from" type="Source" default="self">
+  The source to attach fields from
+</ParamField>
+
+```ruby
+UserSource.attach_fields!(:query)
+```
+
+### schemas
+
+Find all the schemas associated with the configured namespaces.
+
+<ResponseField name="return" type="Array<Schema>">
+  Array of schema objects
+</ResponseField>
+
+```ruby
+UserSource.schemas.each do |schema|
+  # Process each schema
+end
+```
+
+### skip(*names)
+
+Create hooks that throw a done action, preventing any parent hooks from executing.
+
+<ParamField path="names" type="Array<Symbol>" required>
+  Names of hooks to skip
+</ParamField>
+
+```ruby
+skip(:mutation, :subscription)
+```
+
+### override(hook_name, &block)
+
+Shortcut to skip a hook and then define a new implementation.
+
+<ParamField path="hook_name" type="Symbol" required>
+  The hook to override
+</ParamField>
+
+<ParamField path="block" type="Proc" required>
+  The new implementation
+</ParamField>
+
+```ruby
+override(:query) do
+  field :users, [User], full: true
+end
+```
+
+### disable(*names)
+
+Disable specific hooks by removing them from hook_names.
+
+<ParamField path="names" type="Array<Symbol>" required>
+  Names of hooks to disable
+</ParamField>
+
+```ruby
+disable(:mutation, :subscription)
+```
+
+### enable(*names)
+
+Enable additional hooks by adding them to hook_names.
+
+<ParamField path="names" type="Array<Symbol>" required>
+  Names of hooks to enable
+</ParamField>
+
+```ruby
+enable(:custom_hook)
+```
+
+### skip_fields!(*list)
+
+Add one or more fields to the list of fields that need to be ignored in all places.
+
+<ParamField path="list" type="Array<Symbol | String>" required>
+  Field names to skip (converts to underscore)
+</ParamField>
+
+```ruby
+skip_fields!(:internal_id, :secret_token)
+```
+
+### skip_field?(name, on:)
+
+Check if a given field name should be skipped on the given type.
+
+<ParamField path="name" type="Symbol | String" required>
+  The field name to check
+</ParamField>
+
+<ParamField path="on" type="Symbol" required>
+  The type context (:object, :input, :query, etc.)
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  True if the field should be skipped
+</ResponseField>
+
+```ruby
+if skip_field?(:created_at, on: :input)
+  # Field is skipped
+end
+```
+
+## Hooks
+
+Sources use a hook-based system to define their schema structure. The default hooks execute in this order:
+
+1. **start** - Initial setup and configuration
+2. **object** - Define fields for the GraphQL object type
+3. **input** - Define fields for the GraphQL input type
+4. **query** - Define query fields
+5. **mutation** - Define mutation fields
+6. **subscription** - Define subscription fields
+
+### Using Hooks
+
+```ruby
+class UserSource < Rails::GraphQL::Source
+  step(:start) do
+    # Initial configuration
+  end
+
+  step(:object) do
+    field :name, :string
+    field :email, :string
+  end
+
+  step(:query) do
+    field :users, [User], full: true
+    field :user, User, null: false do
+      argument :id, :id, null: false
+    end
+  end
+end
+```
+
+## Configuration
+
+### Class Attributes
+
+<ParamField path="abstract" type="Boolean" default="false">
+  If true, generates a new source describer. Non-abstract classes inherited from it will be described by this abstraction.
+</ParamField>
+
+<ParamField path="hook_names" type="Set<Symbol>" default="[:start, :object, :input, :query, :mutation, :subscription]">
+  List of hook names used while describing a new source. Sets the order of execution.
+</ParamField>
+
+## Protected Methods
+
+### find_type!(type, **xargs)
+
+Find a given type on the same namespaces of the source. Raises an exception if the type cannot be found.
+
+<ParamField path="type" type="String | Symbol" required>
+  The type to find
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional options passed to the type map
+</ParamField>
+
+### skip_from(source, *fields)
+
+Add fields to be skipped on the given source as the segment.
+
+<ParamField path="source" type="Symbol" required>
+  The source type to skip fields from
+</ParamField>
+
+<ParamField path="fields" type="Array<Symbol>" required>
+  Field names to skip
+</ParamField>
+
+```ruby
+skip_from(:input, :created_at, :updated_at)
+```
+
+## Delegated Methods
+
+The following methods are delegated to the object:
+
+- `field` - Define a field on the object
+- `proxy_field` - Define a proxied field
+- `overwrite_field` - Overwrite an existing field
+- `field?` - Check if a field exists
+- `field_names` - Get all field names
+- `gql_name` - Get the GraphQL name
+
+## Example
+
+```ruby
+class UserSource < Rails::GraphQL::Source
+  # Configure namespaces
+  namespace :api
+
+  # Skip certain fields
+  skip_fields! :password_digest, :reset_token
+
+  # Define object fields
+  step(:object) do
+    field :name, :string, null: false
+    field :email, :string, null: false
+    field :created_at, :iso8601_date_time
+  end
+
+  # Define query fields
+  step(:query) do
+    field :users, [User], full: true do
+      argument :limit, :integer, default: 10
+    end
+
+    field :user, User, null: false do
+      argument :id, :id, null: false
+    end
+  end
+
+  # Define mutation fields
+  step(:mutation) do
+    field :create_user, User, null: false do
+      argument :name, :string, null: false
+      argument :email, :string, null: false
+    end
+  end
+end
+```

@@ -1,0 +1,265 @@
+---
+title: Event
+description: The class responsible for triggering events and managing event data that can be used in event handlers
+---
+
+## Overview
+
+The `Event` class is the core mechanism for triggering callbacks in Rails GraphQL. It carries data between event sources and handlers, supports multiple trigger modes, and provides utilities for stopping event propagation.
+
+## Class Methods
+
+### trigger
+
+A shortcut method that can perform any mode of event triggering.
+
+```ruby
+Event.trigger(event_name, object, source, **xargs, &block)
+```
+
+<ParamField path="event_name" type="Symbol" required>
+  The name of the event to trigger
+</ParamField>
+
+<ParamField path="object" type="Object" required>
+  The object(s) to trigger the event on, or a block if using block-based triggering
+</ParamField>
+
+<ParamField path="source" type="Object" required>
+  The source object that is triggering the event
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional data and options for the event. Supports trigger mode options:
+  - `all?` or `stack?`: Use `trigger_all` mode
+  - `object?`: Use `trigger_object` mode
+  - `single?`: Use `trigger` mode
+  - `fallback_trigger!`: Default mode if no other specified (default: `:trigger`)
+  - `collect?`: Collect results from callbacks
+  - `reverse?`: Process callbacks in reverse order
+</ParamField>
+
+<ParamField path="block" type="Proc">
+  Optional block to execute for the event
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The result of the triggered event
+</ResponseField>
+
+## Instance Methods
+
+### initialize
+
+Creates a new event instance.
+
+```ruby
+Event.new(name, source, **data)
+```
+
+<ParamField path="name" type="Symbol" required>
+  The event name
+</ParamField>
+
+<ParamField path="source" type="Object" required>
+  The source object triggering the event
+</ParamField>
+
+<ParamField path="data" type="Hash">
+  Event data accessible to handlers. Special keys:
+  - `collect?`: Enable result collection
+  - `reverse?`: Process callbacks in reverse order
+</ParamField>
+
+### same_source?
+
+Checks if the provided object is equal to the event source.
+
+```ruby
+event.same_source?(other)
+```
+
+<ParamField path="other" type="Object" required>
+  The object to compare against the event source
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns true if the source matches. For directives, checks if the source is using that directive.
+</ResponseField>
+
+### parameter
+
+Retrieves event data by name.
+
+```ruby
+event.parameter(name)
+event[name]  # alias
+```
+
+<ParamField path="name" type="Symbol" required>
+  The parameter name to retrieve
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The parameter value from the event data or a method with that name
+</ResponseField>
+
+### parameter?
+
+Checks if a parameter exists.
+
+```ruby
+event.parameter?(name)
+event.key?(name)  # alias
+```
+
+<ParamField path="name" type="Symbol" required>
+  The parameter name to check
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns true if the parameter exists
+</ResponseField>
+
+### set_on
+
+Temporarily attaches the event to an instance.
+
+```ruby
+event.set_on(instance, &block)
+event.on_instance(instance, &block)  # alias
+```
+
+<ParamField path="instance" type="Object" required>
+  The instance to attach the event to
+</ParamField>
+
+<ParamField path="block" type="Proc" required>
+  The block to execute with the event attached
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The result of the block execution
+</ResponseField>
+
+### trigger_all
+
+Triggers the event on multiple objects.
+
+```ruby
+event.trigger_all(*objects)
+```
+
+<ParamField path="objects" type="Array" required>
+  The objects to trigger the event on. Can be a flat array or enumerable.
+</ParamField>
+
+<ResponseField name="return" type="Array | nil">
+  If `collect?` was set, returns an array of results. Otherwise returns nil.
+</ResponseField>
+
+### trigger_object
+
+Triggers the event on a single object by running its callbacks.
+
+```ruby
+event.trigger_object(object, events = nil)
+```
+
+<ParamField path="object" type="Object" required>
+  The object to trigger the event on
+</ParamField>
+
+<ParamField path="events" type="Array">
+  Optional pre-fetched events array (optimization)
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The result of the last callback execution
+</ResponseField>
+
+### trigger
+
+Triggers a single callback block.
+
+```ruby
+event.trigger(block)
+```
+
+<ParamField path="block" type="Proc" required>
+  The callback block to execute
+</ParamField>
+
+<ResponseField name="return" type="Object">
+  The result of the block execution
+</ResponseField>
+
+### stop
+
+Stops event propagation at a specific layer.
+
+```ruby
+event.stop(*result, layer: nil)
+```
+
+<ParamField path="result" type="Object">
+  Optional result to return when stopping
+</ParamField>
+
+<ParamField path="layer" type="Symbol | Integer">
+  The layer to stop at. Can be a numeric index or nil for the current layer.
+</ParamField>
+
+### call_next
+
+Calls the next callback in the queue.
+
+```ruby
+event.call_next
+```
+
+<ResponseField name="return" type="Object">
+  The result of the next callback, or nil if no more callbacks
+</ResponseField>
+
+## Attributes
+
+<ResponseField name="source" type="Object">
+  The object that triggered the event
+</ResponseField>
+
+<ResponseField name="data" type="Hash">
+  The event data hash containing all parameters
+</ResponseField>
+
+<ResponseField name="event_name" type="Symbol">
+  The name of the event
+</ResponseField>
+
+<ResponseField name="object" type="Object">
+  The current object being processed (during trigger_object)
+</ResponseField>
+
+<ResponseField name="last_result" type="Object">
+  The result of the last callback execution
+</ResponseField>
+
+## Constants
+
+<ResponseField name="TRIGGER_TYPES" type="Hash">
+  Maps trigger mode options to method names:
+  - `all?: :trigger_all`
+  - `stack?: :trigger_all`
+  - `object?: :trigger_object`
+  - `single?: :trigger`
+</ResponseField>
+
+## Event Layers
+
+Events use a layered catch/throw system for control flow:
+
+- **:stack** - The outer layer when processing multiple objects
+- **:object** - The layer when processing a single object's callbacks
+- **:item** - The layer for individual callback execution
+
+Use `stop(layer: :stack)` to stop at a specific layer.

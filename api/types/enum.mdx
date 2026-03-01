@@ -1,0 +1,349 @@
+---
+title: "Enum Type"
+description: "Define GraphQL enum types that describe a set of possible values"
+---
+
+## Overview
+
+Enum types, like scalar types, represent leaf values in a GraphQL type system. However, enums describe a specific set of possible values.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Specification:** [GraphQL Enum Type Definition](http://spec.graphql.org/June2018/#EnumTypeDefinition)
+
+## Class Attributes
+
+<ParamField path="values" type="Array<String>">
+  Collection of enum value names (uppercase)
+</ParamField>
+
+<ParamField path="value_description" type="Hash">
+  Descriptions for each enum value
+</ParamField>
+
+<ParamField path="value_directives" type="Hash">
+  Directives applied to each enum value
+</ParamField>
+
+## Class Methods
+
+### `add(value, desc: nil, description: nil, directives: nil, deprecated: false)`
+
+Add a value to the enum type.
+
+<ParamField path="value" type="String | Symbol" required>
+  The enum value name (will be converted to uppercase)
+</ParamField>
+
+<ParamField path="desc" type="String">
+  Description of the enum value
+</ParamField>
+
+<ParamField path="description" type="String">
+  Alias for `desc`
+</ParamField>
+
+<ParamField path="directives" type="Array<Directive>">
+  List of directives to apply to this value
+</ParamField>
+
+<ParamField path="deprecated" type="Boolean | String" default="false">
+  Mark value as deprecated. Use `true` for default message, or provide a string for custom reason
+</ParamField>
+
+```ruby
+class StatusEnum < GraphQL::EnumType
+  add :active, desc: "User is active"
+  add :inactive, desc: "User is inactive"
+  add :pending, desc: "User registration is pending"
+  add :archived, deprecated: "Use inactive instead"
+end
+```
+
+### `indexed!`
+
+Mark the enum as indexed, allowing values to be set by numeric index.
+
+```ruby
+class PriorityEnum < GraphQL::EnumType
+  indexed!
+  
+  add :low      # index 0
+  add :medium   # index 1
+  add :high     # index 2
+end
+
+PriorityEnum.as_json(1) # => "MEDIUM"
+```
+
+### `indexed?`
+
+Check if the enum is marked as indexed.
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if enum supports numeric indexing
+</ResponseField>
+
+### `valid_input?(value)`
+
+Check if a value is valid enum input (before deserialization).
+
+<ParamField path="value" type="Any" required>
+  The value to validate
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value is a valid enum input
+</ResponseField>
+
+<Expandable title="Valid Input Types">
+- Enum token (e.g., `ACTIVE` in GraphQL query)
+- String matching an enum value (when `allow_string_as_enum_input` config enabled)
+- String token (quoted enum value)
+</Expandable>
+
+### `valid_output?(value)`
+
+Check if a value is valid enum output (before serialization).
+
+<ParamField path="value" type="Any" required>
+  The value to validate
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value can be serialized as this enum
+</ResponseField>
+
+### `deserialize(value)`
+
+Turn user input into an enum instance.
+
+<ParamField path="value" type="String | Token" required>
+  The input value to deserialize
+</ParamField>
+
+<ResponseField name="return" type="Enum | nil">
+  Returns an enum instance, or `nil` if invalid
+</ResponseField>
+
+```ruby
+status = StatusEnum.deserialize("ACTIVE")
+status.to_s # => "ACTIVE"
+status.to_sym # => :active
+```
+
+### `as_json(value)`
+
+Transform a value to its JSON representation.
+
+<ParamField path="value" type="Any" required>
+  The value to serialize
+</ParamField>
+
+<ResponseField name="return" type="String | nil">
+  The enum value as a string (uppercase)
+</ResponseField>
+
+```ruby
+StatusEnum.as_json(:active) # => "ACTIVE"
+StatusEnum.as_json(0)       # => "ACTIVE" (if indexed)
+```
+
+### `to_json(value)`
+
+Transform a value to its JSON string representation.
+
+<ParamField path="value" type="Any" required>
+  The value to serialize
+</ParamField>
+
+<ResponseField name="return" type="String">
+  The enum value as a quoted string
+</ResponseField>
+
+### `decorate(value)`
+
+Wrap a value in an enum instance.
+
+<ParamField path="value" type="Any" required>
+  The value to decorate
+</ParamField>
+
+<ResponseField name="return" type="Enum">
+  An enum instance wrapping the value
+</ResponseField>
+
+### `value_using?(value, directive)`
+
+Check if a specific enum value uses a directive.
+
+<ParamField path="value" type="String" required>
+  The enum value to check
+</ParamField>
+
+<ParamField path="directive" type="Class" required>
+  The directive class to check for
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value has the directive
+</ResponseField>
+
+### `all_deprecated_values`
+
+Get a hash of deprecated values and their reasons.
+
+<ResponseField name="return" type="Hash">
+  Hash mapping deprecated values to their deprecation reasons
+</ResponseField>
+
+```ruby
+StatusEnum.all_deprecated_values
+# => { "ARCHIVED" => "Use inactive instead" }
+```
+
+## Instance Methods
+
+### `initialize(value)`
+
+Create a new enum instance.
+
+<ParamField path="value" type="String" required>
+  The enum value
+</ParamField>
+
+### `to_s`
+
+Return the enum value as a string.
+
+```ruby
+status = StatusEnum.new("ACTIVE")
+status.to_s # => "ACTIVE"
+```
+
+### `to_sym`
+
+Return the enum value as a lowercase symbol.
+
+```ruby
+status = StatusEnum.new("ACTIVE")
+status.to_sym # => :active
+```
+
+### `to_i`
+
+Return the indexed position of the value.
+
+```ruby
+priority = PriorityEnum.new("MEDIUM")
+priority.to_i # => 1
+```
+
+### `valid?`
+
+Check if the current value is valid.
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value is valid for this enum
+</ResponseField>
+
+### `description`
+
+Get the description for the current value.
+
+<ResponseField name="return" type="String | nil">
+  The value's description
+</ResponseField>
+
+### `directives`
+
+Get directives applied to the current value.
+
+<ResponseField name="return" type="Array<Directive> | nil">
+  List of directives for this value
+</ResponseField>
+
+### `deprecated?`
+
+Check if the current value is deprecated.
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value has a `@deprecated` directive
+</ResponseField>
+
+### `deprecated_reason`
+
+Get the deprecation reason for the current value.
+
+<ResponseField name="return" type="String | nil">
+  The deprecation reason, if any
+</ResponseField>
+
+## Configuration
+
+```ruby
+class UserRoleEnum < GraphQL::EnumType
+  description "Available user roles"
+  
+  add :admin, desc: "Administrator with full access"
+  add :editor, desc: "Can edit content"
+  add :viewer, desc: "Read-only access"
+  add :moderator, deprecated: "Role merged into editor"
+end
+```
+
+## Usage Examples
+
+### Basic Enum
+
+```ruby
+class ColorEnum < GraphQL::EnumType
+  add :red
+  add :green
+  add :blue
+end
+
+field :favorite_color, ColorEnum
+```
+
+### Indexed Enum
+
+```ruby
+class SeverityEnum < GraphQL::EnumType
+  indexed!
+  
+  add :info     # 0
+  add :warning  # 1
+  add :error    # 2
+  add :critical # 3
+end
+
+# Can reference by index
+SeverityEnum.as_json(2) # => "ERROR"
+```
+
+### With Deprecation
+
+```ruby
+class AccountTypeEnum < GraphQL::EnumType
+  add :free
+  add :premium
+  add :enterprise
+  add :trial, deprecated: "Use free with trial flag instead"
+end
+```
+
+### Working with Instances
+
+```ruby
+role = UserRoleEnum.deserialize("ADMIN")
+role.to_sym # => :admin
+role.valid? # => true
+role.deprecated? # => false
+role.description # => "Administrator with full access"
+```
+
+## Related Types
+
+- [Scalar](/api/types/scalar) - Alternative leaf value types
+- [Input](/api/types/input) - Use enums as input field types

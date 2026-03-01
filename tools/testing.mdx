@@ -1,0 +1,235 @@
+---
+title: Testing
+description: Built-in features for testing your GraphQL API including validation and stubbing
+---
+
+Rails GraphQL provides several features to make testing your GraphQL API easier and more efficient. Use these tools to validate documents, stub field values, and test your schema behavior.
+
+## Validating Documents
+
+You can validate GraphQL documents without executing them using the `valid?` method. This runs through the entire organize step and returns `true` if the document is valid.
+
+### Basic Validation
+
+Validate a simple query:
+
+```ruby
+GraphQL.valid?('{ welcome }')
+# => true
+```
+
+### With Context and Variables
+
+Validation includes checking the document structure, context, and variables:
+
+```ruby
+GraphQL.valid?(
+  'query GetUser($id: ID!) { user(id: $id) { name } }',
+  variables: { id: '123' }
+)
+# => true
+```
+
+### Implementation
+
+The `valid?` method is implemented in `lib/rails/graphql/request.rb:175`:
+
+```ruby
+def valid?(document)
+  reset!
+
+  log_execution(document, event: 'validate.graphql') do
+    @document = initialize_document(document)
+    run_document(with: :compile)
+    @log_extra[:result] = @errors.empty?
+  end
+end
+```
+
+It leverages the compile process to check for errors without executing resolvers.
+
+<Tip>
+Use `valid?` in your test suite to ensure that query strings are properly formatted before testing execution logic.
+</Tip>
+
+## Stubbing Field Values
+
+Stub field return values using prepared data. This feature is particularly useful for testing without database calls or external dependencies.
+
+### Simple Stubbing
+
+Stub data using the `data_for` parameter:
+
+```ruby
+GraphQL.execute('{ users { id name } }', data_for: {
+  'query.users' => [User.new]
+})
+```
+
+The format is `gql_name.field` for type fields or `{query,mutation,subscription}.field` for schema-level fields.
+
+### Advanced Stubbing with Request Instance
+
+For more control, use a request instance with options:
+
+```ruby
+request = GraphQL.request
+request.prepare_data_for('User.id', [1, 2], repeat: :cycle)
+request.execute('{ users { id name } }')
+```
+
+### Repeat Options
+
+Control how stubbed values are used:
+
+- **Default** - Use values in order, then return nil
+- `repeat: :cycle` - Cycle through values repeatedly
+- `repeat: :last` - Keep returning the last value
+
+### Complex Example
+
+```ruby
+request = GraphQL.request
+
+# Stub multiple fields
+request.prepare_data_for('query.users', [
+  User.new(id: 1, name: 'Alice'),
+  User.new(id: 2, name: 'Bob')
+])
+
+request.prepare_data_for('User.posts', [
+  [Post.new(title: 'First Post')],
+  [Post.new(title: 'Second Post')]
+])
+
+result = request.execute(<<~GRAPHQL)
+  {
+    users {
+      id
+      name
+      posts {
+        title
+      }
+    }
+  }
+GRAPHQL
+```
+
+### Implementation
+
+The `prepare_data_for` method is in `lib/rails/graphql/request.rb:201`:
+
+```ruby
+def prepare_data_for(field, value, **options)
+  field = PreparedData.lookup(self, field)
+
+  if prepared_data.key?(field)
+    prepared_data[field].push(value)
+  else
+    prepared_data[field] = PreparedData.new(field, value, **options)
+  end
+end
+```
+
+## Test Examples
+
+### RSpec Example
+
+```ruby
+RSpec.describe 'GraphQL API' do
+  describe 'users query' do
+    it 'returns valid structure' do
+      query = '{ users { id name email } }'
+      expect(GraphQL.valid?(query)).to be true
+    end
+
+    it 'returns stubbed users' do
+      query = '{ users { id name } }'
+      users = [
+        User.new(id: 1, name: 'Alice'),
+        User.new(id: 2, name: 'Bob')
+      ]
+
+      result = GraphQL.execute(query, data_for: { 'query.users' => users })
+      data = JSON.parse(result)
+
+      expect(data['data']['users']).to eq([
+        { 'id' => 1, 'name' => 'Alice' },
+        { 'id' => 2, 'name' => 'Bob' }
+      ])
+    end
+  end
+end
+```
+
+### Minitest Example
+
+```ruby
+class GraphQLTest < ActiveSupport::TestCase
+  test 'validates complex query' do
+    query = <<~GRAPHQL
+      query GetUserPosts($userId: ID!) {
+        user(id: $userId) {
+          name
+          posts {
+            title
+            comments { text }
+          }
+        }
+      }
+    GRAPHQL
+
+    assert GraphQL.valid?(query, variables: { userId: '1' })
+  end
+
+  test 'stubs nested data' do
+    request = GraphQL.request
+    request.prepare_data_for('query.user', User.new(id: 1, name: 'Alice'))
+    request.prepare_data_for('User.posts', [
+      Post.new(title: 'Hello World')
+    ])
+
+    result = request.execute('{ user { name posts { title } } }')
+    data = JSON.parse(result)
+
+    assert_equal 'Alice', data['data']['user']['name']
+    assert_equal 'Hello World', data['data']['user']['posts'][0]['title']
+  end
+end
+```
+
+## Testing Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Validate First" icon="check">
+    Use `valid?` to test document structure before testing execution
+  </Card>
+  
+  <Card title="Stub External Calls" icon="database">
+    Stub database queries and API calls for faster, isolated tests
+  </Card>
+  
+  <Card title="Test Error Cases" icon="triangle-exclamation">
+    Verify that invalid queries return appropriate errors
+  </Card>
+  
+  <Card title="Use Type Safety" icon="shield">
+    Test with properly typed variables to catch type mismatches
+  </Card>
+</CardGroup>
+
+<Warning>
+More testing features will be added for RSpec and Rubocop in future releases.
+</Warning>
+
+## Related Tools
+
+<CardGroup cols={2}>
+  <Card title="Introspection" icon="magnifying-glass" href="/tools/introspection">
+    Use introspection to programmatically test schema structure
+  </Card>
+  
+  <Card title="Parser" icon="code" href="/tools/parser">
+    Validate document parsing with the GraphQL parser
+  </Card>
+</CardGroup>

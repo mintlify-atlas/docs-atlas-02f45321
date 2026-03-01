@@ -1,0 +1,159 @@
+---
+title: 'Fragments'
+description: 'Learn how to use fragments to share common parts of your GraphQL queries and reduce duplication in Rails GraphQL'
+---
+
+Fragments let you reuse common field selections across your GraphQL queries, reducing duplication and improving maintainability.
+
+```graphql
+fragment Profile on User {
+  picture
+  name
+}
+```
+
+Fragments are used in your [requests](/guides/request) to avoid repeating portions of your [selection set](/guides/request#selection-set), and they're a great way to isolate component-specific data requirements.
+
+## Using Fragments
+
+You can use fragments anywhere in your selection set, regardless of the [entry point](/guides/request#entry-points) type. To use a fragment:
+
+1. Ensure it has a unique name within the request document
+2. Specify a type (Object, Interface, or Union)
+3. Select only fields present in that type
+
+```graphql
+query {
+  me { ...Profile }
+}
+
+fragment Profile on User { picture name }
+```
+
+This is equivalent to:
+
+```graphql
+query {
+  me { picture name }
+}
+```
+
+Read more about [spreads](/guides/spreads).
+
+## Fragment Type Constraints
+
+Fragment types can be:
+
+- [Object](/guides/objects) types
+- [Interface](/guides/interfaces) types
+- [Union](/guides/unions) types
+
+## Multiple Fragment Usage
+
+<Warning>
+Currently, you cannot use a fragment that would be prepared more than once by multiple spreads. Put preparable fields inside the operation instead.
+</Warning>
+
+This works fine:
+
+```graphql
+{ users { ...UserData } }
+#            ↳ Just one prepare OK
+fragment UserData on User { id email addresses { id line1 } }
+```
+
+But this causes an error:
+
+```graphql
+{ users { ...UserData } user(id: 1) { ...UserData } }
+#            ↳ First prepare OK          ↳ Second prepare ERROR
+fragment UserData on User { id email addresses { id line1 } }
+#                                    ↳ This causes the problem
+```
+
+Solution - split the fragment:
+
+```graphql
+{
+  users { ...UserData addresses { ...AddressData } }
+  user(id: 1) { ...UserData addresses { ...AddressData } }
+}
+fragment UserData on User { id email }
+fragment AddressData on Address { id line1 }
+```
+
+Read more about [request preparation](/guides/request#preparing).
+
+## Components and Fragments
+
+As a best practice, front-end components should declare the fields they need for rendering. You can turn this into fragments to simplify your queries.
+
+```js
+// Show my profile and my friends' profiles
+// where Profile is a separated component
+import Profile, { Fragment as ProfileFragment } from '@/components/profile';
+
+const query = `
+  query {
+    me { ...Profile friends { ...Profile } }
+  }
+
+  ${ProfileFragment}
+`;
+```
+
+### Automatic Field Deduplication
+
+When composing multiple fragments with overlapping fields, GraphQL automatically deduplicates them:
+
+```graphql
+query {
+  me { id ...Profile ...PersonalCard ...Recipient }
+}
+
+fragment Profile on User { picture name }
+fragment PersonalCard on User { id name phone email }
+fragment Recipient on User { id picture name email }
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "me": {
+      "id": "1",
+      "picture": "avatar.jpg",
+      "name": "John Doe",
+      "phone": "+15551239876",
+      "email": "john+doe@test.com"
+    }
+  }
+}
+```
+
+Notice that even though `id`, `name`, `picture`, and `email` appear in multiple fragments, each field is returned only once.
+
+## Fragment Best Practices
+
+<Steps>
+  <Step title="Name fragments clearly">
+    Use descriptive names that indicate the fragment's purpose, like `UserProfile`, `AddressData`, or `ProductDetails`.
+  </Step>
+  
+  <Step title="Keep fragments focused">
+    Each fragment should represent a logical grouping of fields for a specific component or use case.
+  </Step>
+  
+  <Step title="Avoid deep nesting">
+    While fragments can contain nested fields, avoid excessive nesting that makes them harder to reuse.
+  </Step>
+  
+  <Step title="Co-locate with components">
+    Store fragment definitions alongside the components that use them for better maintainability.
+  </Step>
+</Steps>
+
+<Tip>
+Fragments are especially powerful in component-based architectures where each component knows exactly which data it needs to render.
+</Tip>

@@ -1,0 +1,224 @@
+---
+title: Objects
+description: Define GraphQL object types with fields to organize and structure your data
+---
+
+Objects are the principal building blocks of GraphQL schemas. They represent structured data with named fields, each returning a specific type. Objects create branches in the GraphQL tree, allowing you to organize and access your data hierarchically.
+
+## Basic Object Definition
+
+You can define objects in dedicated files or inline within your schema.
+
+<CodeGroup>
+```ruby File-based Definition
+# app/graphql/objects/user.rb
+module GraphQL
+  class User < GraphQL::Object
+    field :id, null: false
+    field :name
+    field :email
+  end
+end
+```
+
+```ruby Schema Definition
+# app/graphql/app_schema.rb
+object 'User' do
+  field :id, null: false
+  field :name
+  field :email
+end
+```
+</CodeGroup>
+
+The resulting GraphQL type:
+
+```graphql
+type User {
+  id: ID!
+  name: String
+  email: String
+}
+```
+
+## Implementing Interfaces
+
+Objects can implement one or more interfaces, inheriting their field definitions and validation rules.
+
+```ruby Star Wars Example
+object 'Human' do
+  self.assigned_to = MemoryTest::Human
+  
+  implements 'Character'
+  desc 'A humanoid creature in the Star Wars universe'
+  
+  # Interface fields are automatically imported
+  # Add object-specific fields
+  field :home_planet, :string,
+    desc: 'The home planet of the human, or null if unknown'
+    
+  field :greeting, :string,
+    desc: 'A greeting phrase from this person to someone',
+    arguments: arg(:name, :string, null: false)
+end
+```
+
+<Info>
+By default, interface fields are automatically imported. To prevent this, use `implements 'InterfaceName', import_fields: false`
+</Info>
+
+## Field Resolution
+
+Objects support multiple ways to resolve field values:
+
+### Automatic Resolution
+
+Fields automatically map to methods on the underlying data:
+
+```ruby
+object 'User' do
+  self.assigned_to = User
+  
+  field :id
+  field :email
+  # These automatically call user.id and user.email
+end
+```
+
+### Custom Resolvers
+
+```ruby
+object 'Human' do
+  field :greeting, :string do
+    argument :name, :string, null: false
+  end
+  
+  def greeting(name:)
+    format(current_value.greeting, name)
+  end
+end
+```
+
+### Method Names
+
+```ruby
+field :full_name, :string, method_name: :calculate_full_name
+
+def calculate_full_name
+  "#{current_value.first_name} #{current_value.last_name}"
+end
+```
+
+## Type Assignment
+
+Assign objects to Ruby classes for automatic mapping:
+
+```ruby
+object 'User' do
+  # Assigned to ::User model
+  self.assigned_to = 'User'
+  
+  field :id
+  field :name
+  field :email
+end
+```
+
+<Tip>
+Objects work best with [ActiveRecord Models](https://api.rubyonrails.org/classes/ActiveRecord/Base.html). The framework automatically validates field availability.
+</Tip>
+
+## Valid Member Checking
+
+Objects can validate if a given value is a valid member:
+
+```ruby
+GraphQL::User.valid_member?(user_instance) # => true
+GraphQL::User.valid_member?({ id: 1, name: 'John' }) # => true
+```
+
+The framework checks if the value:
+- Matches the assigned type
+- Has all required fields (non-null fields)
+- Responds to field method names
+
+## Descriptions and Documentation
+
+Add descriptions for introspection and documentation:
+
+```ruby
+object 'User' do
+  desc 'A registered user in the system'
+  
+  field :id, null: false,
+    desc: 'Unique identifier for the user'
+    
+  field :email,
+    desc: 'Primary email address'
+end
+```
+
+## Common Patterns
+
+### Query Fields
+
+```ruby
+query_fields do
+  field :user, 'User' do
+    argument :id, :id, null: false
+  end
+end
+
+def user(id:)
+  User.find(id)
+end
+```
+
+### Mutation Returns
+
+```ruby
+mutation_fields do
+  field :create_user, 'User', null: false do
+    argument :input, 'UserInput', null: false
+  end
+end
+
+def create_user(input:)
+  User.create!(input.params)
+end
+```
+
+### Nested Objects
+
+```ruby
+object 'Post' do
+  field :id
+  field :title
+  field :author, 'User'
+end
+```
+
+## Usage in Queries
+
+Once defined, query objects in your GraphQL documents:
+
+```graphql
+query {
+  user(id: "1") {
+    id
+    name
+    email
+  }
+}
+```
+
+<Note>
+Objects create the structure of your GraphQL API. Unlike [scalars](/types/scalars), they allow nested field selection.
+</Note>
+
+## Related Documentation
+
+- [Interfaces](/types/interfaces) - Share fields across multiple objects
+- [Fields](/guides/fields) - Configure output fields
+- [Type Assignment](/guides/advanced/type-assignment) - Map types to Ruby classes
+- [Sources](/guides/sources) - Connect objects to data sources

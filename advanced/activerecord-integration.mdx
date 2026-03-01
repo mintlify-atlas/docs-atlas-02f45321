@@ -1,0 +1,414 @@
+---
+title: ActiveRecord Integration
+description: Automatic GraphQL schema generation from ActiveRecord models with full database adapter support
+---
+
+## Overview
+
+The ActiveRecord source provides seamless integration between ActiveRecord models and GraphQL. It automatically generates objects, inputs, queries, and mutations based on your model definitions, supporting PostgreSQL, MySQL, and SQLite.
+
+<Info>
+ActiveRecord sources handle associations, validations, enums, and STI (Single Table Inheritance) automatically.
+</Info>
+
+## Basic Setup
+
+```ruby
+# app/graphql/sources/user_source.rb
+module GraphQL
+  class UserSource < GraphQL::Source::ActiveRecordSource
+    build_all
+  end
+end
+```
+
+This automatically creates:
+- 1 Object type (or Interface for STI)
+- 1 Input type
+- 2 Query fields (singular and plural)
+- 3 Mutation fields (create, update, delete)
+
+## Assignment Validation
+
+The source validates it's used with ActiveRecord models:
+
+```ruby
+# From lib/rails/graphql/source/active_record_source.rb
+validate_assignment('ActiveRecord::Base') do |value|
+  +"The \"#{value.name}\" is not a valid Active Record model"
+end
+```
+
+## Database Adapter Support
+
+Automatic adapter enabling based on your database:
+
+```ruby
+step(:start) { GraphQL.enable_ar_adapter(adapter_name) }
+```
+
+Supported adapters:
+- **PostgreSQL** - Full support including JSONB, arrays, and custom types
+- **MySQL** - Complete MySQL/MariaDB support
+- **SQLite** - SQLite3 support for development and testing
+
+## Generated Components
+
+### Object Type
+
+Builds fields from columns and associations:
+
+```ruby
+step(:object) do
+  build_attribute_fields(self)
+  build_reflection_fields(self)
+end
+```
+
+**Example for User model:**
+
+```graphql
+type User {
+  id: ID!
+  name: String!
+  email: String!
+  createdAt: String!
+  posts: [Post!]!
+}
+```
+
+### Input Type
+
+Creates input from writable attributes:
+
+```ruby
+step(:input) do
+  extra = GraphQL.enumerate(primary_key).entries.product([{ null: true }]).to_h
+  build_attribute_fields(self, **extra)
+  build_reflection_inputs(self)
+  
+  safe_field(model.inheritance_column, :string, null: false) if interface?
+  safe_field(:_delete, :boolean, default: false)
+end
+```
+
+**Example:**
+
+```graphql
+input UserInput {
+  id: ID
+  name: String!
+  email: String!
+  _delete: Boolean
+}
+```
+
+<Note>
+The `_delete` field enables cascading deletes in nested mutations.
+</Note>
+
+### Query Fields
+
+```ruby
+step(:query) do
+  interface? ? build_interface : build_object
+  type = interface? ? interface : object
+  
+  safe_field(plural, type, full: true) do
+    before_resolve(:load_records)
+  end
+  
+  safe_field(singular, type, null: false) do
+    build_primary_key_arguments(self)
+    before_resolve(:load_record)
+  end
+end
+```
+
+**Generated queries:**
+
+```graphql
+type Query {
+  users: [User!]!
+  user(id: ID!): User!
+}
+```
+
+### Mutation Fields
+
+```ruby
+step(:mutation) do
+  interface? ? build_interface : build_object
+  type = interface? ? interface : object
+  build_input
+  
+  safe_field("create_#{singular}", type, null: false) do
+    argument(singular, input, null: false)
+    perform(:create_record)
+  end
+  
+  safe_field("update_#{singular}", type, null: false) do
+    build_primary_key_arguments(self)
+    argument(singular, input, null: false)
+    before_resolve(:load_record)
+    perform(:update_record)
+  end
+  
+  safe_field("delete_#{singular}", :boolean, null: false) do
+    build_primary_key_arguments(self)
+    before_resolve(:load_record)
+    perform(:destroy_record)
+  end
+end
+```
+
+**Generated mutations:**
+
+```graphql
+type Mutation {
+  createUser(user: UserInput!): User!
+  updateUser(id: ID!, user: UserInput!): User!
+  deleteUser(id: ID!): Boolean!
+}
+```
+
+## Associations
+
+Associations are automatically converted to fields:
+
+<CodeGroup>
+```ruby Has Many
+class User < ApplicationRecord
+  has_many :posts
+end
+
+# Generates:
+# field :posts, [Post!]!
+```
+
+```ruby Belongs To
+class Post < ApplicationRecord
+  belongs_to :user
+end
+
+# Generates:
+# field :user, User!
+```
+
+```ruby Has One
+class User < ApplicationRecord
+  has_one :profile
+end
+
+# Generates:
+# field :profile, Profile
+```
+</CodeGroup>
+
+### Preloading Associations
+
+```ruby
+# From lib/rails/graphql/source/active_record_source.rb
+def preload_association(association, scope = nil)
+  event.stop(preload(association, scope || event.last_result), layer: :object)
+end
+
+def build_association_scope(association)
+  scope = model._reflect_on_association(association).klass.default_scoped
+  inject_scopes(scope, :relation)
+end
+```
+
+<Info>
+Associations use ActiveRecord's preloader to avoid N+1 queries automatically.
+</Info>
+
+## Enums
+
+ActiveRecord enums are converted to GraphQL enums:
+
+```ruby
+class User < ApplicationRecord
+  enum role: { user: 0, admin: 1, moderator: 2 }
+end
+```
+
+```ruby
+step(:enums) { build_enum_types }
+
+def enums
+  @enums ||= model.defined_enums.dup
+end
+```
+
+**Generated enum:**
+
+```graphql
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+```
+
+## Validations
+
+Presence validations automatically set `null: false`:
+
+```ruby
+# From lib/rails/graphql/source/active_record_source.rb
+def attr_required?(attr_name)
+  return true if attr_name.eql?(primary_key)
+  return false if model.columns_hash[attr_name]&.default.present?
+  return false unless model._validators.key?(attr_name.to_sym)
+  
+  model._validators[attr_name.to_sym].any? do |validator|
+    validator.is_a?(presence_validator) &&
+      !(validator.options[:if] || validator.options[:unless])
+  end
+end
+```
+
+## STI (Single Table Inheritance)
+
+STI models generate interfaces instead of objects:
+
+```ruby
+def interface?
+  defined?(@interface) || act_as_interface == true ||
+    (act_as_interface != false && sti_interface?)
+end
+```
+
+<CodeGroup>
+```ruby Parent Model
+class Animal < ApplicationRecord
+  # STI base
+end
+
+# Generates Interface
+```
+
+```ruby Child Models
+class Dog < Animal
+end
+
+class Cat < Animal
+end
+
+# Generate Object types implementing Animal interface
+```
+</CodeGroup>
+
+## Error Handling
+
+Validation errors can be exposed in extensions:
+
+```ruby
+class UserSource < GraphQL::Source::ActiveRecordSource
+  self.errors_to_extensions = :messages  # or :details
+end
+```
+
+```ruby
+# From lib/rails/graphql/source/active_record_source.rb
+def create_record
+  input_argument.resource.tap(&:save!)
+rescue ::ActiveRecord::RecordInvalid => error
+  errors_to_extensions(error.record.errors)
+  raise
+end
+```
+
+**Response with errors:**
+
+```json
+{
+  "data": { "createUser": null },
+  "errors": [{
+    "message": "Validation failed: Email can't be blank"
+  }],
+  "extensions": {
+    "createUser": {
+      "email": ["can't be blank"]
+    }
+  }
+}
+```
+
+## Customization
+
+<CodeGroup>
+```ruby Skip Fields
+class UserSource < GraphQL::Source::ActiveRecordSource
+  skip_fields! :password_digest, :reset_token
+  skip_from :input, :created_at, :updated_at
+  
+  build_all
+end
+```
+
+```ruby Custom Fields
+class UserSource < GraphQL::Source::ActiveRecordSource
+  build_all
+  
+  step(:object) do
+    safe_field(:full_name, :string) do
+      resolve { "#{current_value.first_name} #{current_value.last_name}" }
+    end
+  end
+end
+```
+
+```ruby Disable Associations
+class UserSource < GraphQL::Source::ActiveRecordSource
+  self.with_associations = false
+  build_all
+end
+```
+</CodeGroup>
+
+## Configuration Options
+
+<ResponseField name="with_associations" type="boolean" default="true">
+  Build fields for associations
+</ResponseField>
+
+<ResponseField name="errors_to_extensions" type="false | :messages | :details" default="false">
+  Export validation errors to response extensions
+</ResponseField>
+
+<ResponseField name="act_as_interface" type="boolean" default="nil">
+  Force interface generation instead of object
+</ResponseField>
+
+<ResponseField name="interface_class" type="Class" default="nil">
+  Custom superclass for generated interface
+</ResponseField>
+
+## Performance
+
+ActiveRecord sources include built-in optimizations:
+
+<Card title="N+1 Prevention" icon="gauge-high">
+  Automatic association preloading using ActiveRecord::Associations::Preloader
+</Card>
+
+<Card title="Lazy Loading" icon="hourglass-half">
+  Tables are only checked when building: `build!(*) super if model&.table_exists?`
+</Card>
+
+<Card title="Scoped Queries" icon="filter">
+  Support for default scopes and injected scopes
+</Card>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Sources" icon="bridge" href="/advanced/sources">
+    Core source concepts and architecture
+  </Card>
+  <Card title="Type Map" icon="map" href="/advanced/type-map">
+    Type resolution and registration
+  </Card>
+</CardGroup>

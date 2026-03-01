@@ -1,0 +1,339 @@
+---
+title: Unions
+description: Group multiple object types into a single type for polymorphic field returns
+---
+
+Unions allow you to group different object types into a single type. They're perfect for fields that can return one of several possible object types, like polymorphic associations or search results.
+
+## Basic Union Definition
+
+Define unions in files or inline within your schema:
+
+<CodeGroup>
+```ruby File-based Definition
+# app/graphql/unions/person.rb
+module GraphQL
+  class Person < GraphQL::Union
+    append User, Admin
+  end
+end
+```
+
+```ruby Schema Definition
+# app/graphql/app_schema.rb
+union 'Person' do
+  append User, Admin
+end
+
+# OR using symbols
+union 'Person' do
+  append :user, :admin
+end
+
+# OR shorthand
+union 'Person', of_types: %w[User Admin]
+```
+</CodeGroup>
+
+The resulting GraphQL type:
+
+```graphql
+union Person = User | Admin
+```
+
+<Tip>
+The shorthand syntax is preferred - it's concise and avoids referencing types by their classes.
+</Tip>
+
+## Adding Members
+
+Use the `append` method to add object types to the union:
+
+```ruby
+union 'SearchResult' do
+  append :post, :comment, :user
+end
+```
+
+### Validation Rules
+
+Unions enforce strict validation:
+
+1. **Minimum members**: Must contain at least one member
+2. **Same base class**: All members must share the same base class
+3. **Object types only**: Members must be `GraphQL::Object` types
+
+```ruby
+# ✓ Valid
+union 'SearchResult' do
+  append :post, :comment  # Both are objects
+end
+
+# ✗ Invalid - different base classes
+union 'Invalid' do
+  append :user, :post_input  # Object + Input type
+end
+
+# ✗ Invalid - no members
+union 'Empty' do
+  # Raises: "A union must contain at least one member"
+end
+```
+
+## Type Resolution
+
+Unions require type resolution to determine which member type represents a given value:
+
+### Default Resolution
+
+The default `type_for` method checks each member type:
+
+```ruby
+union 'SearchResult' do
+  append :post, :comment, :user
+  
+  # Default implementation:
+  def self.type_for(value, request)
+    all_members&.reverse_each&.find { |t| t.valid_member?(value) }
+  end
+end
+```
+
+### Custom Resolution
+
+Override for specific logic, like polymorphic associations:
+
+```ruby
+union 'Commentable' do
+  append :post, :video
+  
+  def self.type_for(value, request)
+    # Use Rails polymorphic type column
+    request.find_type(value.commentable_type)
+  end
+end
+```
+
+<Warning>
+Always use `request.find_type` for type lookups - it's cached during the request and respects [namespaces](/guides/advanced/namespaces).
+</Warning>
+
+## Key Differences from Interfaces
+
+Unions and interfaces both enable polymorphism but serve different purposes:
+
+<CardGroup cols={2}>
+  <Card title="Unions" icon="object-group">
+    - No shared fields
+    - Group unrelated types
+    - Pure composition
+    - Perfect for polymorphic belongs_to
+  </Card>
+  
+  <Card title="Interfaces" icon="diagram-project">
+    - Define shared fields
+    - Objects inherit fields
+    - Shared resolution logic
+    - Perfect for STI models
+  </Card>
+</CardGroup>
+
+<Info>
+Unions cannot have fields. To access any data, you must use spreads to query type-specific fields.
+</Info>
+
+## Usage in Queries
+
+Unions require spreads to access fields since they don't define any themselves:
+
+```ruby
+query_fields do
+  field :search, 'SearchResult', array: true do
+    argument :query, :string, null: false
+  end
+end
+
+def search(query:)
+  # Returns mixed array of Posts, Comments, and Users
+  GlobalSearch.perform(query)
+end
+```
+
+```graphql Query with Spreads
+query {
+  search(query: "graphql") {
+    __typename
+    
+    ... on Post {
+      id
+      title
+      body
+    }
+    
+    ... on Comment {
+      id
+      text
+      author {
+        name
+      }
+    }
+    
+    ... on User {
+      id
+      email
+      username
+    }
+  }
+}
+```
+
+<Note>
+The `__typename` field is the only field you can query directly on a union. Use [spreads](/guides/spreads) for everything else.
+</Note>
+
+## Common Patterns
+
+### Polymorphic Associations
+
+```ruby Polymorphic Belongs To
+# Rails model
+class Comment < ApplicationRecord
+  belongs_to :commentable, polymorphic: true
+end
+
+# GraphQL union
+union 'Commentable', of_types: %w[Post Video]
+
+object 'Comment' do
+  field :id
+  field :text
+  field :commentable, 'Commentable'
+end
+```
+
+### Search Results
+
+```ruby Multiple Content Types
+union 'SearchResult', of_types: %w[Post Comment User Tag]
+
+query_fields do
+  field :search, 'SearchResult', array: true do
+    argument :query, :string, null: false
+    argument :types, :string, array: true
+  end
+end
+
+def search(query:, types: nil)
+  results = []
+  types ||= %w[Post Comment User Tag]
+  
+  results += Post.search(query) if types.include?('Post')
+  results += Comment.search(query) if types.include?('Comment')
+  results += User.search(query) if types.include?('User')
+  results += Tag.search(query) if types.include?('Tag')
+  
+  results
+end
+```
+
+### Activity Feeds
+
+```ruby Different Event Types
+union 'ActivityEvent', of_types: %w[
+  CommentCreated
+  PostPublished
+  UserFollowed
+  PostLiked
+]
+
+query_fields do
+  field :activity_feed, 'ActivityEvent', array: true do
+    argument :user_id, :id, null: false
+  end
+end
+```
+
+### Error Handling
+
+```ruby Success or Error
+union 'CreateUserResult', of_types: %w[User ValidationError]
+
+mutation_fields do
+  field :create_user, 'CreateUserResult', null: false do
+    argument :input, 'UserInput', null: false
+  end
+end
+
+def create_user(input:)
+  user = User.new(input.params)
+  if user.save
+    user
+  else
+    ValidationError.new(errors: user.errors)
+  end
+end
+```
+
+## Descriptions
+
+Document unions for API clarity:
+
+```ruby
+union 'SearchResult' do
+  desc 'Possible search result types'
+  append :post, :comment, :user
+end
+```
+
+## Inspecting Unions
+
+Unions provide helpful inspection output:
+
+```ruby
+GraphQL::SearchResult.inspect
+# => #<GraphQL::Union SearchResult (3) {Post | Comment | User}>
+```
+
+## Best Practices
+
+<Tip>
+Unions are perfect for Rails [polymorphic associations](https://guides.rubyonrails.org/association_basics.html#polymorphic-associations). Map the polymorphic `belongs_to` to a union of possible types.
+</Tip>
+
+<Check>
+**When to use unions:**
+- Polymorphic belongs_to associations
+- Search results across multiple types
+- Activity feeds with different event types
+- Result types (success/error patterns)
+- Any field that returns "one of several types"
+</Check>
+
+<Warning>
+**Avoid using unions when:**
+- Types share common fields (use interfaces instead)
+- You need to query shared fields without spreads
+- All types inherit from a common base (use interfaces)
+</Warning>
+
+## Member Access
+
+Access union members programmatically:
+
+```ruby
+GraphQL::SearchResult.all_members
+# => [GraphQL::Post, GraphQL::Comment, GraphQL::User]
+
+GraphQL::SearchResult.members.size
+# => 3
+
+GraphQL::SearchResult.of_kind
+# => GraphQL::Object
+```
+
+## Related Documentation
+
+- [Interfaces](/types/interfaces) - Alternative for types with shared fields
+- [Objects](/types/objects) - Define union members
+- [Spreads](/guides/spreads) - Query type-specific fields
+- [Polymorphic Associations](https://guides.rubyonrails.org/association_basics.html#polymorphic-associations) - Rails pattern

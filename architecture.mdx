@@ -1,0 +1,402 @@
+---
+title: Architecture
+description: Understanding how Rails GraphQL integrates with Rails and organizes your GraphQL schema
+---
+
+Rails GraphQL is designed to feel like a natural extension of Rails. This guide explains the core architectural concepts and how the framework integrates with your Rails application.
+
+## Core philosophy
+
+Rails GraphQL follows Rails conventions rather than fighting against them. The `app/graphql` directory behaves similarly to other Rails directories, and all GraphQL objects are encapsulated in the `GraphQL` module to avoid naming collisions.
+
+### The GraphQL module
+
+Everything in Rails GraphQL lives inside the `GraphQL` module. This prevents your GraphQL types from colliding with your Rails models and provides a clear namespace:
+
+```ruby app/graphql/app_schema.rb
+# Schema definition
+class GraphQL::AppSchema < GraphQL::Schema
+end
+
+# Object type
+class GraphQL::User < GraphQL::Object
+end
+
+# Input type
+class GraphQL::CreateUserInput < GraphQL::Input
+end
+```
+
+<Info>
+  This structure is fully compatible with Zeitwerk, Rails' code autoloader.
+</Info>
+
+## Core components
+
+Rails GraphQL consists of nine crucial components that work together to process GraphQL requests:
+
+### Schema
+
+A schema is where types meet and organize themselves. It defines what queries, mutations, and subscriptions are available.
+
+Think of a schema as its own Rails application - the fields are its routing system, and the types are everything it can respond to.
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    query_fields do
+      field(:welcome, :string, null: false)
+    end
+
+    def welcome
+      'Hello World!'
+    end
+  end
+end
+```
+
+**Key capabilities:**
+- Define query, mutation, and subscription fields
+- Support for one or multiple schemas per application
+- Namespace isolation for schema separation
+- Direct execution: `GraphQL::AppSchema.execute('{ welcome }')`
+
+<Tip>
+  You can run multiple schemas in a single Rails application by using different namespaces. Each schema operates independently.
+</Tip>
+
+### Type
+
+Types are the heart of GraphQL. Almost everything in GraphQL is a type:
+
+<CardGroup cols={2}>
+  <Card title="Object" icon="cube">
+    Complex types with fields
+    
+    ```ruby
+    class GraphQL::User < GraphQL::Object
+    end
+    ```
+  </Card>
+  <Card title="Scalar" icon="hashtag">
+    Leaf types (String, Int, etc.)
+    
+    ```ruby
+    field(:name, :string)
+    ```
+  </Card>
+  <Card title="Interface" icon="diagram-project">
+    Shared fields across types
+    
+    ```ruby
+    class GraphQL::Node < GraphQL::Interface
+    end
+    ```
+  </Card>
+  <Card title="Union" icon="layer-group">
+    One of several types
+    
+    ```ruby
+    class GraphQL::SearchResult < GraphQL::Union
+    end
+    ```
+  </Card>
+  <Card title="Enum" icon="list-ol">
+    Predefined values
+    
+    ```ruby
+    class GraphQL::Status < GraphQL::Enum
+    end
+    ```
+  </Card>
+  <Card title="Input" icon="pen-to-square">
+    Complex input arguments
+    
+    ```ruby
+    class GraphQL::UserInput < GraphQL::Input
+    end
+    ```
+  </Card>
+</CardGroup>
+
+### Field
+
+Fields are the most important concept in GraphQL. Everything you can access from any GraphQL operation is based on fields.
+
+```ruby
+# In a schema - acts like a route
+field(:user, 'User', null: false) do
+  argument(:id, :id, null: false)
+end
+
+# In an object - acts like an attribute
+field(:name, :string, null: false)
+field(:email, :string, null: false)
+```
+
+<Warning>
+  Field names cannot be duplicated within a list of fields. Each field must have a unique name.
+</Warning>
+
+### Argument
+
+Arguments allow fields to accept parameters, changing their behavior based on input:
+
+```ruby
+field(:users, ['User'], null: false) do
+  argument(:limit, :int, default: 10)
+  argument(:offset, :int, default: 0)
+  argument(:search, :string)
+end
+
+def users(limit:, offset:, search: nil)
+  users = User.limit(limit).offset(offset)
+  users = users.where('name LIKE ?', "%#{search}%") if search
+  users
+end
+```
+
+### Directive
+
+Directives modify behavior at execution or definition time. Rails GraphQL provides four built-in directives:
+
+- `@deprecated` - Mark fields as deprecated
+- `@skip` - Conditionally skip fields
+- `@include` - Conditionally include fields  
+- `@specifiedBy` - Reference scalar specifications
+
+```ruby
+field(:legacy_field, :string).deprecated('Use newField instead')
+```
+
+## Framework components
+
+These components are specific to Rails GraphQL and make the magic happen:
+
+### Type Map
+
+The Type Map is a centralized registry that knows about all schemas, types, and their relationships. It acts as an index for your GraphQL application.
+
+**What it stores:**
+- All schemas available in your application
+- All types each schema has access to
+- Aliases to other types
+- Mapping between values and their underlying objects
+
+```ruby
+# Access the type map
+Rails::GraphQL.type_map
+
+# Find a type
+GraphQL::AppSchema.find_type!(:user)
+# => GraphQL::User
+
+# Check if a type exists
+type_map.exist?(:user, namespace: :base)
+# => true
+```
+
+<Note>
+  The Type Map uses a namespace → base_class → key structure to organize and retrieve types efficiently.
+</Note>
+
+### Request
+
+The Request object is responsible for executing GraphQL operations. It follows a three-step process:
+
+<Steps>
+  <Step title="Organize">
+    Parse the GraphQL document and organize the operation tree
+  </Step>
+  <Step title="Prepare">
+    Validate the query and prepare for execution
+  </Step>
+  <Step title="Resolve">
+    Execute field resolvers and collect results
+  </Step>
+</Steps>
+
+```ruby
+# Simple execution (most common)
+GraphQL::AppSchema.execute('{ welcome }')
+# => {"data"=>{"welcome"=>"Hello World!"}}
+
+# Manual request management
+request = GraphQL::AppSchema.request
+request.execute('{ welcome }')
+# => {"data"=>{"welcome"=>"Hello World!"}}
+```
+
+**Request context:**
+
+You can pass a context hash that's available to all resolvers:
+
+```ruby
+GraphQL::AppSchema.execute(
+  '{ currentUser { name } }',
+  context: { current_user: user }
+)
+```
+
+### Source
+
+Sources bridge your Ruby classes (especially ActiveRecord models) to GraphQL types. They automatically generate GraphQL types and fields based on your models.
+
+```ruby app/graphql/sources/user_source.rb
+module GraphQL
+  class UserSource < GraphQL::ActiveRecordSource
+    # Automatically creates:
+    # - GraphQL::User object type
+    # - Fields for all database columns
+    # - Associations as fields
+    # - Query methods
+  end
+end
+```
+
+**Supported databases:**
+- PostgreSQL
+- MySQL  
+- SQLite
+
+<Info>
+  Sources are optional but provide a powerful way to quickly expose your ActiveRecord models through GraphQL.
+</Info>
+
+### Event
+
+During a request's lifecycle, several events occur. Events are how the request interacts with your code:
+
+```ruby
+class GraphQL::User < GraphQL::Object
+  # Called when field is being resolved
+  on(:resolve) do |event|
+    # Custom logic before resolution
+  end
+end
+```
+
+**Common events:**
+- `:attach` - When an object is attached to a schema
+- `:resolve` - When a field is being resolved
+- `:prepare` - Before field execution
+- `:finalize` - After field execution
+
+### Callback
+
+Callbacks are the counterpart of events. Methods and Procs are turned into callbacks that respond to events:
+
+```ruby
+class GraphQL::AppSchema < GraphQL::Schema
+  # Callbacks for request lifecycle
+  before_execute do |request|
+    # Log or modify request
+  end
+
+  after_execute do |request, response|
+    # Track metrics
+  end
+end
+```
+
+## Integration with Rails
+
+Rails GraphQL integrates deeply with Rails features:
+
+### ActiveRecord integration
+
+Direct connection through Sources:
+
+```ruby
+# Define a source for a model
+class GraphQL::UserSource < GraphQL::ActiveRecordSource
+end
+
+# Automatically maps:
+# - Database columns → GraphQL fields
+# - Associations → GraphQL relationships
+# - Validations → GraphQL input validation
+```
+
+### ActionCable integration
+
+Built-in subscription support:
+
+```ruby
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    subscription_fields do
+      field(:message_added, 'Message', null: false)
+    end
+  end
+end
+```
+
+### Logging
+
+Enhanced Rails logs with GraphQL information:
+
+```
+Processing by GraphQLController#execute as */*
+  GraphQL (0.4ms)  { welcome }
+Completed 200 OK in 2ms | GraphQL: 0.4ms
+```
+
+### Caching
+
+Integrates with Rails cache:
+
+```ruby
+field(:expensive_data, :string) do
+  cache key: -> { "expensive:#{context.current_user.id}" }
+end
+```
+
+## Naming conventions
+
+Rails GraphQL follows specific naming patterns:
+
+| Context | Convention | Example |
+|---------|-----------|----------|
+| Ruby classes | PascalCase | `GraphQL::User` |
+| GraphQL types | PascalCase | `"User"` |
+| Field names (Ruby) | snake_case | `:user_name` |
+| Field names (GraphQL) | camelCase | `"userName"` |
+| Arguments (Ruby) | snake_case | `:user_id` |
+| Arguments (GraphQL) | camelCase | `"userId"` |
+
+<Tip>
+  As a rule of thumb: class names in PascalCase, symbols in snake_case, strings in PascalCase for types or camelCase for fields.
+</Tip>
+
+## Shortcuts
+
+Rails GraphQL provides a `::GraphQL` module as shortcut to `::Rails::GraphQL`:
+
+```ruby
+# These are equivalent:
+GraphQL::Schema
+Rails::GraphQL::Schema
+
+# Shortcuts available:
+GraphQL.type_map       # Type registry
+GraphQL.execute(...)   # Execute queries
+GraphQL.to_gql(...)    # Convert to GraphQL string
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Schemas" icon="sitemap" href="/guides/schemas">
+    Learn how to define and organize schemas
+  </Card>
+  <Card title="Types" icon="shapes" href="/guides/types">
+    Explore all GraphQL type kinds
+  </Card>
+  <Card title="Fields" icon="list" href="/guides/fields">
+    Master field definitions and resolvers
+  </Card>
+  <Card title="Sources" icon="database" href="/guides/sources">
+    Bridge ActiveRecord models to GraphQL
+  </Card>
+</CardGroup>

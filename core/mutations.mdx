@@ -1,0 +1,495 @@
+---
+title: Mutations
+description: Define and execute GraphQL mutations to modify data in your API
+---
+
+Mutations are GraphQL operations that modify data on the server and return the updated results.
+
+```graphql
+mutation {
+  createUser(name: "John", email: "john@example.com") {
+    id
+    name
+    email
+  }
+}
+```
+
+## Mutation Structure
+
+A mutation consists of five elements:
+
+- **type** - `mutation` (required)
+- **name** - Optional mutation name
+- **variables** - Optional variable definitions
+- **directives** - Optional directives
+- **selection** - One or more fields from schema mutation fields
+
+```graphql
+mutation CreateUser($name: String!, $email: String!) {
+  createUser(name: $name, email: $email) {
+    id
+    name
+  }
+}
+```
+
+## Three Ways to Define Mutations
+
+### 1. Inline Schema Definition
+
+Define mutation fields directly in your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    mutation_fields do
+      field(:create_user, 'User', null: false) do
+        argument :name, :string, null: false
+        argument :email, :string, null: false
+        
+        perform do |name:, email:|
+          User.create!(name: name, email: email)
+        end
+      end
+      
+      field(:update_user, 'User', null: false) do
+        argument :id, :id, null: false
+        argument :name, :string
+        
+        perform do |id:, name: nil|
+          user = User.find(id)
+          user.update!(name: name) if name
+          user
+        end
+      end
+    end
+  end
+end
+```
+
+Alternatively, use the `call` option:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    mutation_fields do
+      field(:create_user, 'User', call: :perform_create) do
+        argument :name, :string, null: false
+      end
+    end
+    
+    # By default, uses the bang version: create_user!
+    def self.create_user!(name:)
+      User.create!(name: name)
+    end
+    
+    # Or specify custom method with call:
+    def self.perform_create(name:)
+      User.create!(name: name)
+    end
+  end
+end
+```
+
+### 2. Standalone Mutation Classes
+
+Define mutations as separate classes:
+
+```ruby app/graphql/mutations/create_user_mutation.rb
+module GraphQL
+  module Mutations
+    class CreateUserMutation < GraphQL::Mutation
+      desc 'Create a new user'
+      
+      argument :name, :string, null: false
+      argument :email, :string, null: false
+      argument :role, 'Role', default: 'USER'
+      
+      def resolve(name:, email:, role:)
+        User.create!(
+          name: name,
+          email: email,
+          role: role
+        )
+      end
+    end
+  end
+end
+```
+
+Import into your schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    import_into :mutation, Mutations::CreateUserMutation
+    
+    # Or import all mutations
+    import_all Mutations, recursive: true
+  end
+end
+```
+
+<Info>
+  Standalone mutations use the class name as the field name. `CreateUserMutation` becomes `createUser`.
+</Info>
+
+### 3. Source-Based Mutations
+
+Sources can automatically generate mutations:
+
+```ruby app/graphql/sources/user_source.rb
+module GraphQL
+  class UserSource < GraphQL::Source::ActiveRecordSource
+    self.assigned_to = 'User'
+    
+    # Automatically provides:
+    # - createUser(input: UserInput!): User!
+    # - updateUser(id: ID!, input: UserInput!): User!
+    # - deleteUser(id: ID!): Boolean!
+  end
+end
+```
+
+## Mutation Arguments
+
+Mutations typically use Input types for complex data:
+
+<Tabs>
+  <Tab title="Input Type">
+    ```ruby
+    # Define an input type
+    input 'UserInput' do
+      field :name, :string, null: false
+      field :email, :string, null: false
+      field :age, :int
+      field :role, 'Role', default: 'USER'
+    end
+    
+    mutation_fields do
+      field(:create_user, 'User', null: false) do
+        argument :input, 'UserInput', null: false
+        
+        perform do |input:|
+          User.create!(input.params)
+        end
+      end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Scalar Arguments">
+    ```ruby
+    mutation_fields do
+      field(:create_user, 'User', null: false) do
+        argument :name, :string, null: false
+        argument :email, :string, null: false
+        argument :age, :int
+        
+        perform do |name:, email:, age: nil|
+          User.create!(name: name, email: email, age: age)
+        end
+      end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Mixed Arguments">
+    ```ruby
+    mutation_fields do
+      field(:update_user, 'User', null: false) do
+        argument :id, :id, null: false
+        argument :input, 'UserInput', null: false
+        
+        perform do |id:, input:|
+          user = User.find(id)
+          user.update!(input.params)
+          user
+        end
+      end
+    end
+    ```
+  </Tab>
+</Tabs>
+
+## The Perform Step
+
+Mutations have a special `perform` step that executes before resolution:
+
+```ruby app/graphql/mutations/create_post_mutation.rb
+module GraphQL
+  module Mutations
+    class CreatePostMutation < GraphQL::Mutation
+      argument :title, :string, null: false
+      argument :body, :string, null: false
+      
+      # The resolve method acts as the perform step
+      def resolve(title:, body:)
+        Post.create!(
+          title: title,
+          body: body,
+          author: context.current_user
+        )
+      end
+    end
+  end
+end
+```
+
+Inline mutations use the `perform` block:
+
+```ruby
+mutation_fields do
+  field(:create_post, 'Post', null: false) do
+    argument :title, :string, null: false
+    
+    perform do |title:|
+      Post.create!(title: title, author: context.current_user)
+    end
+  end
+end
+```
+
+### Perform Context
+
+The perform step has access to:
+
+```ruby
+def resolve(title:, body:)
+  object    # The source object (usually the schema)
+  request   # The current GraphQL request
+  context   # Request context (current_user, etc.)
+  
+  # Example: Check authorization
+  raise GraphQL::UnauthorizedError unless context.current_user
+  
+  Post.create!(title: title, body: body, author: context.current_user)
+end
+```
+
+## Mutation Examples
+
+### Create Operation
+
+```graphql
+mutation {
+  createUser(name: "John Doe", email: "john@example.com") {
+    id
+    name
+    email
+    createdAt
+  }
+}
+```
+
+### Update Operation
+
+```graphql
+mutation {
+  updateUser(id: 1, input: { name: "Jane Doe" }) {
+    id
+    name
+    updatedAt
+  }
+}
+```
+
+### Delete Operation
+
+```graphql
+mutation {
+  deleteUser(id: 1)
+}
+```
+
+### With Variables
+
+```graphql
+mutation CreatePost($title: String!, $body: String!) {
+  createPost(input: { title: $title, body: $body }) {
+    id
+    title
+    body
+    author {
+      id
+      name
+    }
+  }
+}
+```
+
+Variables:
+
+```json
+{
+  "title": "My First Post",
+  "body": "This is the content..."
+}
+```
+
+### Multiple Mutations
+
+```graphql
+mutation {
+  createPost(input: { title: "Post 1" }) {
+    id
+  }
+  
+  createComment(input: { postId: 1, body: "Great!" }) {
+    id
+  }
+}
+```
+
+<Warning>
+  Unlike queries, mutations in a single operation execute sequentially in the order they appear.
+</Warning>
+
+## Return Types
+
+Mutations can return various types:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    mutation_fields do
+      # Return the created object
+      field(:create_user, 'User', null: false)
+      
+      # Return a boolean
+      field(:delete_user, :bool, null: false) do
+        argument :id, :id, null: false
+        perform { |id:| User.find(id).destroy! }
+      end
+      
+      # Return a custom payload type
+      field(:update_user, 'UserPayload', null: false)
+    end
+  end
+end
+```
+
+### Payload Types
+
+Create payload types for complex responses:
+
+```ruby app/graphql/objects/user_payload.rb
+module GraphQL
+  class UserPayload < GraphQL::Object
+    field :user, 'User', null: false
+    field :errors, :string, array: true
+    field :success, :bool, null: false
+  end
+end
+```
+
+```ruby app/graphql/mutations/create_user_mutation.rb
+def resolve(name:, email:)
+  user = User.new(name: name, email: email)
+  
+  if user.save
+    { user: user, errors: [], success: true }
+  else
+    { user: user, errors: user.errors.full_messages, success: false }
+  end
+end
+```
+
+## Input Validation
+
+Validate mutation inputs:
+
+```ruby app/graphql/mutations/create_user_mutation.rb
+module GraphQL
+  module Mutations
+    class CreateUserMutation < GraphQL::Mutation
+      argument :input, 'UserInput', null: false
+      
+      def resolve(input:)
+        # Access input fields
+        input.args.name   # => "John"
+        input.params      # => { name: "John", email: "..." }
+        
+        # Validate
+        raise GraphQL::ValidationError, 'Name too short' if input.args.name.length < 3
+        
+        # Use input resource (if assigned)
+        user = input.resource
+        user.save!
+        user
+      end
+    end
+  end
+end
+```
+
+## Error Handling
+
+Handle mutation errors gracefully:
+
+```ruby app/graphql/mutations/create_user_mutation.rb
+def resolve(name:, email:)
+  user = User.create!(name: name, email: email)
+rescue ActiveRecord::RecordInvalid => e
+  # Errors will be included in the response
+  raise GraphQL::ExecutionError.new(
+    e.message,
+    extensions: { code: 'VALIDATION_ERROR', field: 'user' }
+  )
+end
+```
+
+Or use `rescue_from` in the schema:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    rescue_from ActiveRecord::RecordInvalid do |exception|
+      { errors: [{ message: exception.message }] }
+    end
+  end
+end
+```
+
+## Mutation Options
+
+### Call Method
+
+Specify which method to call:
+
+```ruby
+mutation_fields do
+  # Calls create_user! by default
+  field(:create_user, 'User')
+  
+  # Calls custom_create method
+  field(:create_user, 'User', call: :custom_create)
+end
+```
+
+### Perform Block
+
+Use inline blocks for simple mutations:
+
+```ruby
+field(:delete_user, :bool) do
+  argument :id, :id, null: false
+  
+  perform do |id:|
+    User.find(id).destroy!
+    true
+  end
+end
+```
+
+## Best Practices
+
+1. **Use Input types** - Organize complex arguments in Input types
+2. **Return the modified object** - Let clients request the fields they need
+3. **Validate inputs** - Check data before mutations
+4. **Handle errors gracefully** - Use rescue_from or try/catch
+5. **Use payload types** - Return structured responses with errors
+6. **Check authorization** - Verify permissions in perform step
+7. **Keep mutations focused** - One mutation should do one thing
+8. **Name clearly** - Use verb + noun pattern (createUser, updatePost)

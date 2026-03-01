@@ -1,0 +1,558 @@
+---
+title: Custom Sources
+description: Build custom source bridges to automatically generate GraphQL schemas from your data models and custom backends.
+---
+
+## Overview
+
+Sources in Rails GraphQL provide a powerful abstraction for bridging data models to your GraphQL schema. They automatically generate objects, inputs, queries, and mutations based on your underlying data structure.
+
+## What is a Source?
+
+A source is an abstract object that contains fields, objects, and operations which are delivered to your schemas through proxies. Sources maintain ownership of objects while making them available across multiple schemas and namespaces.
+
+## Built-in Sources
+
+Rails GraphQL includes `ActiveRecordSource` for bridging ActiveRecord models:
+
+```ruby
+module GraphQL
+  class UserSource < Rails::GraphQL::Source::ActiveRecordSource
+    # Automatically creates:
+    # - User object type
+    # - UserInput input type
+    # - user/users query fields
+    # - createUser/updateUser/deleteUser mutations
+  end
+end
+```
+
+## Creating a Custom Source
+
+### Basic Structure
+
+Inherit from `Rails::GraphQL::Source::Base`:
+
+```ruby
+module GraphQL
+  class CustomSource < Rails::GraphQL::Source::Base
+    # Assign the source to a model/class
+    assigned_to 'MyDataModel'
+    
+    # Configure namespaces
+    namespace :api
+    
+    # Define hooks
+    step(:object) do
+      # Build object type fields
+    end
+    
+    step(:query) do
+      # Build query fields
+    end
+  end
+end
+```
+
+### Assignment
+
+Connect your source to a Ruby class:
+
+```ruby
+class CustomSource < Rails::GraphQL::Source::Base
+  # By class name (string)
+  assigned_to 'MyDataModel'
+  
+  # By constant
+  assigned_to MyDataModel
+  
+  # Auto-inferred from source name
+  # UserSource -> User
+  # BlogPostSource -> BlogPost
+end
+```
+
+## Source Hooks
+
+Sources use hooks to define schema elements at different stages:
+
+### Available Hooks
+
+- `:start` - Initial setup
+- `:object` - Build object type fields
+- `:input` - Build input type fields
+- `:query` - Build query fields
+- `:mutation` - Build mutation fields
+- `:subscription` - Build subscription fields
+
+### Defining Hooks
+
+```ruby
+step(:object) do
+  # Add fields to the object type
+  safe_field :name, :string, null: false
+  safe_field :email, :string
+end
+
+step(:query) do
+  # Build the object first
+  build_object
+  
+  # Add query fields
+  safe_field(:user, object, null: false) do
+    argument :id, :id, null: false
+    before_resolve(:load_user)
+  end
+end
+```
+
+## Accessing Source Components
+
+### Object Type
+
+Access or create the GraphQL object type:
+
+```ruby
+object  # Returns or creates the object type
+object.field :name, :string
+```
+
+### Input Type
+
+Access or create the GraphQL input type:
+
+```ruby
+input  # Returns or creates the input type
+input.argument :name, :string, null: false
+```
+
+## Real-World Example: REST API Source
+
+Create a source that bridges a REST API:
+
+```ruby
+module GraphQL
+  class RestApiSource < Rails::GraphQL::Source::Base
+    class_attribute :endpoint, instance_accessor: false
+    class_attribute :model_class, instance_accessor: false
+    
+    # Set the API endpoint
+    def self.api_endpoint(url)
+      self.endpoint = url
+    end
+    
+    # Build object with API fields
+    step(:object) do
+      build_fields_from_schema
+    end
+    
+    # Build query fields
+    step(:query) do
+      build_object
+      
+      safe_field(plural_name, [object]) do
+        before_resolve(:fetch_collection)
+      end
+      
+      safe_field(singular_name, object, null: false) do
+        argument :id, :id, null: false
+        before_resolve(:fetch_single)
+      end
+    end
+    
+    # Build mutation fields
+    step(:mutation) do
+      build_object
+      build_input
+      
+      safe_field("create_#{singular_name}", object, null: false) do
+        argument singular_name, input, null: false
+        perform(:create_via_api)
+      end
+      
+      safe_field("update_#{singular_name}", object, null: false) do
+        argument :id, :id, null: false
+        argument singular_name, input, null: false
+        perform(:update_via_api)
+      end
+    end
+    
+    class << self
+      def singular_name
+        base_name.underscore
+      end
+      
+      def plural_name
+        singular_name.pluralize
+      end
+      
+      private
+      
+      def build_fields_from_schema
+        # Introspect API schema and build fields
+        api_schema.each do |field_name, field_type|
+          safe_field field_name, field_type
+        end
+      end
+      
+      def api_schema
+        # Return field definitions from API
+        HTTParty.get("#{endpoint}/schema").parsed_response
+      end
+    end
+    
+    # Instance methods for resolvers
+    def fetch_collection
+      response = HTTParty.get(self.class.endpoint)
+      response.parsed_response.map { |data| model_class.new(data) }
+    end
+    
+    def fetch_single
+      id = event.argument(:id)
+      response = HTTParty.get("#{self.class.endpoint}/#{id}")
+      model_class.new(response.parsed_response)
+    end
+    
+    def create_via_api
+      data = event.argument(self.class.singular_name)
+      response = HTTParty.post(self.class.endpoint, body: data.to_h)
+      model_class.new(response.parsed_response)
+    end
+    
+    def update_via_api
+      id = event.argument(:id)
+      data = event.argument(self.class.singular_name)
+      response = HTTParty.patch("#{self.class.endpoint}/#{id}", body: data.to_h)
+      model_class.new(response.parsed_response)
+    end
+  end
+end
+```
+
+Usage:
+
+```ruby
+module GraphQL
+  class ProductSource < RestApiSource
+    api_endpoint 'https://api.example.com/products'
+    assigned_to Product
+  end
+end
+```
+
+## Example: MongoDB Source
+
+Create a source for MongoDB documents:
+
+```ruby
+module GraphQL
+  class MongoSource < Rails::GraphQL::Source::Base
+    self.abstract = true
+    
+    # Build object fields from Mongoid model
+    step(:object) do
+      model.fields.each do |name, field|
+        next if skip_field?(name, on: :object)
+        
+        type = map_mongo_type(field.type)
+        safe_field name, type, null: !field.required?
+      end
+    end
+    
+    # Build input fields
+    step(:input) do
+      model.fields.each do |name, field|
+        next if skip_field?(name, on: :input)
+        next if name == '_id'
+        
+        type = map_mongo_type(field.type)
+        argument name, type, null: !field.required?
+      end
+    end
+    
+    # Build query fields
+    step(:query) do
+      build_object
+      
+      safe_field(plural, [object]) do
+        argument :limit, :int, default: 100
+        before_resolve(:load_documents)
+      end
+      
+      safe_field(singular, object, null: false) do
+        argument :id, :id, null: false
+        before_resolve(:load_document)
+      end
+    end
+    
+    # Build mutation fields
+    step(:mutation) do
+      build_object
+      build_input
+      
+      safe_field("create_#{singular}", object, null: false) do
+        argument singular, input, null: false
+        perform(:create_document)
+      end
+      
+      safe_field("update_#{singular}", object, null: false) do
+        argument :id, :id, null: false
+        argument singular, input, null: false
+        perform(:update_document)
+      end
+      
+      safe_field("delete_#{singular}", :boolean, null: false) do
+        argument :id, :id, null: false
+        perform(:delete_document)
+      end
+    end
+    
+    class << self
+      delegate :model_name, to: :model
+      delegate :singular, :plural, to: :model_name
+      
+      alias model assigned_class
+      
+      private
+      
+      def map_mongo_type(mongo_type)
+        case mongo_type.to_s
+        when 'String' then :string
+        when 'Integer' then :int
+        when 'Float' then :float
+        when 'Boolean', 'Mongoid::Boolean' then :boolean
+        when 'Date' then :date
+        when 'DateTime', 'Time' then :date_time
+        when 'Hash' then :json
+        else :string
+        end
+      end
+    end
+    
+    # Resolver methods
+    def load_documents
+      limit = event.argument(:limit) || 100
+      model.limit(limit).to_a
+    end
+    
+    def load_document
+      id = event.argument(:id)
+      model.find(id)
+    end
+    
+    def create_document
+      data = event.argument(singular).to_h
+      model.create!(data)
+    end
+    
+    def update_document
+      id = event.argument(:id)
+      data = event.argument(singular).to_h
+      document = model.find(id)
+      document.update!(data)
+      document
+    end
+    
+    def delete_document
+      id = event.argument(:id)
+      document = model.find(id)
+      document.destroy!
+    end
+    
+    private
+    
+    def model
+      self.class.model
+    end
+    
+    def singular
+      self.class.singular
+    end
+  end
+end
+```
+
+Usage:
+
+```ruby
+module GraphQL
+  class ArticleSource < MongoSource
+    assigned_to Article  # Mongoid model
+  end
+end
+```
+
+## Field Management
+
+### `safe_field`
+
+Use `safe_field` to add fields that respect skip rules:
+
+```ruby
+safe_field :name, :string  # Only added if not skipped
+```
+
+### Skipping Fields
+
+Skip fields globally:
+
+```ruby
+skip_fields! :internal_id, :legacy_field
+```
+
+Skip fields for specific types:
+
+```ruby
+skip_from(:input, :created_at, :updated_at)
+```
+
+### Only Fields
+
+Limit fields for specific types:
+
+```ruby
+self.segmented_only_fields[:input] = [:name, :email].to_set
+```
+
+## Namespaces
+
+Sources can belong to multiple namespaces:
+
+```ruby
+class UserSource < Rails::GraphQL::Source::Base
+  # Single namespace
+  namespace :api
+  
+  # Multiple namespaces
+  namespace :api, :admin
+  
+  # Set namespace (replaces previous)
+  set_namespace :public
+end
+```
+
+## Attaching to Schemas
+
+Sources automatically attach to schemas in their namespaces:
+
+```ruby
+class ApiSchema < Rails::GraphQL::Schema
+  namespace :api
+  # UserSource fields automatically available
+end
+```
+
+Manually attach:
+
+```ruby
+UserSource.attach_fields!(:all)
+UserSource.attach_fields!(:query)  # Only query fields
+```
+
+## Advanced Features
+
+### Custom Type Creation
+
+Create additional types:
+
+```ruby
+step(:start) do
+  @custom_type = create_type(:object, 'CustomType') do
+    field :name, :string
+  end
+end
+```
+
+### Validation
+
+Validate assignments:
+
+```ruby
+validate_assignment('BaseClass') do |value|
+  "The #{value.name} is not a valid model"
+end
+```
+
+### Hooks with Context
+
+Access source context in hooks:
+
+```ruby
+step(:object) do
+  # self is the source class
+  # Access class methods and attributes
+  assigned_class.columns.each do |column|
+    safe_field column.name, map_type(column.type)
+  end
+end
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Abstract Base Classes">
+    Create abstract source classes for common patterns:
+    ```ruby
+    class MyApiSource < Rails::GraphQL::Source::Base
+      self.abstract = true
+      # Common configuration
+    end
+    ```
+  </Accordion>
+  
+  <Accordion title="Skip Sensitive Fields">
+    Always skip fields containing sensitive data:
+    ```ruby
+    skip_fields! :password_digest, :api_token
+    ```
+  </Accordion>
+  
+  <Accordion title="Use safe_field">
+    Always use `safe_field` instead of `field` to respect skip rules.
+  </Accordion>
+  
+  <Accordion title="Validate in Resolvers">
+    Implement proper validation and error handling in resolver methods.
+  </Accordion>
+  
+  <Accordion title="Document Your Source">
+    Add comments explaining what data model your source bridges and any special behavior.
+  </Accordion>
+</AccordionGroup>
+
+## Testing Sources
+
+```ruby
+RSpec.describe GraphQL::UserSource do
+  describe '.object' do
+    it 'creates object type with expected fields' do
+      expect(described_class.object.field_names).to include(:name, :email)
+    end
+  end
+  
+  describe '.schemas' do
+    it 'belongs to correct namespaces' do
+      expect(described_class.schemas.map(&:namespace)).to include(:api)
+    end
+  end
+  
+  describe '#load_user' do
+    it 'loads user by ID' do
+      user = create(:user)
+      source = described_class.new(event: double(argument: user.id))
+      expect(source.load_user).to eq(user)
+    end
+  end
+end
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="ActiveRecord Source" icon="database" href="/guides/sources/active-record">
+    Learn about the built-in ActiveRecord source
+  </Card>
+  <Card title="Namespaces" icon="layer-group" href="/guides/namespaces">
+    Organize your schemas with namespaces
+  </Card>
+</CardGroup>

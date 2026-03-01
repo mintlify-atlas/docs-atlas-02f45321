@@ -1,0 +1,158 @@
+---
+title: "Interface Type"
+description: "Define GraphQL interfaces that represent shared fields across multiple object types"
+---
+
+## Overview
+
+Interface types represent a list of named fields and their types. They define a contract that object types can implement, ensuring those objects include specific fields.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Specification:** [GraphQL Interface Type Definition](http://spec.graphql.org/June2018/#InterfaceTypeDefinition)
+
+## Class Attributes
+
+<ParamField path="field_type" type="Class" default="Field::OutputField">
+  The type of field class used for this interface's fields
+</ParamField>
+
+<ParamField path="types" type="Array<Object>">
+  Collection of object types that implement this interface (managed automatically)
+</ParamField>
+
+## Class Methods
+
+### `type_for(value, *)`
+
+Determine which implementing object type is compatible with the provided value.
+
+<ParamField path="value" type="Any" required>
+  The value to find a type for
+</ParamField>
+
+<ResponseField name="return" type="Object | nil">
+  Returns the first compatible object type, or `nil` if none found
+</ResponseField>
+
+```ruby
+NodeInterface.type_for(user_instance) # => UserType
+```
+
+<Expandable title="Resolution Order">
+Types are checked in reverse order (most recently added first) to allow for override patterns.
+</Expandable>
+
+### `=~(other)`
+
+Check if another type is equivalent to this interface.
+
+<ParamField path="other" type="Type" required>
+  The type to compare
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the other type is equivalent or is an object that implements this interface
+</ResponseField>
+
+```ruby
+NodeInterface =~ UserType # => true (if UserType implements NodeInterface)
+```
+
+### `implemented(object, import_fields: true)`
+
+Called automatically when an object type implements this interface. You typically don't call this directly.
+
+<ParamField path="object" type="Object" required>
+  The object type implementing this interface
+</ParamField>
+
+<ParamField path="import_fields" type="Boolean" default="true">
+  Whether to copy interface fields to the object
+</ParamField>
+
+<Expandable title="Implementation Behavior">
+**Field Validation:**
+- If `import_fields` is `false` (or interface is abstract), the object must already define all interface fields
+- Raises `ArgumentError` if required fields are missing
+- Raises `ArgumentError` if existing fields are not equivalent to interface fields
+
+**Field Importing:**
+- When `import_fields` is `true`, undefined interface fields are automatically added to the object
+- The object is added to the interface's `types` collection
+</Expandable>
+
+## Included Modules
+
+<ParamField path="Helpers::Instantiable">
+  Provides instance creation capabilities
+</ParamField>
+
+<ParamField path="Helpers::WithAssignment">
+  Allows assignment to Ruby classes
+</ParamField>
+
+<ParamField path="Helpers::WithFields">
+  Provides field definition and management methods
+</ParamField>
+
+## Configuration
+
+```ruby
+module NodeInterface < GraphQL::InterfaceType
+  description "An object with a globally unique ID"
+  
+  field :id, :id, null: false do
+    desc "The globally unique identifier"
+  end
+end
+
+class UserType < GraphQL::ObjectType
+  implements NodeInterface
+  
+  # The :id field is automatically imported
+  field :name, :string
+end
+```
+
+## Special Features
+
+### Abstract Interfaces
+
+When an interface is marked as abstract, `import_fields` is automatically set to `false` in the `implemented` method.
+
+### Validation
+
+Interfaces skip field type validation during the validation phase, as fields are copied and interface field types might be broken due to namespaces.
+
+### Type Resolution
+
+Interfaces don't implement `valid_output?` or serialization methods directly. The object types that implement the interface handle validation and serialization.
+
+## Usage Patterns
+
+### Multiple Interfaces
+
+```ruby
+class UserType < GraphQL::ObjectType
+  implements NodeInterface, TimestampedInterface, AuditableInterface
+end
+```
+
+### Selective Field Import
+
+```ruby
+class CustomType < GraphQL::ObjectType
+  # Don't import fields, define them manually
+  implements NodeInterface, import_fields: false
+  
+  field :id, :id, null: false do
+    # Custom implementation
+  end
+end
+```
+
+## Related Types
+
+- [Object](/api/types/object) - Implement interfaces
+- [Union](/api/types/union) - Alternative to interfaces for polymorphism

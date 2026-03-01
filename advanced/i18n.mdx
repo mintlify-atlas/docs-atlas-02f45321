@@ -1,0 +1,493 @@
+---
+title: Internationalization
+description: Translation support for field descriptions, types, and documentation using Rails I18n
+---
+
+## Overview
+
+Rails GraphQL provides comprehensive internationalization (i18n) support for documenting your API. While field and type names cannot be translated, all descriptions can be provided in multiple languages using Rails' I18n system.
+
+<Warning>
+**Performance Impact**: I18n is a heavy process. Enable only when delivering API documentation or in development mode.
+</Warning>
+
+## Basic Concept
+
+YAML-based translations for GraphQL components:
+
+<CodeGroup>
+```yaml English (en.yml)
+en:
+  graphql:
+    field:
+      query:
+        hello: "Returns a greeting message"
+    object:
+      user: "Represents a user in the system"
+```
+
+```yaml Spanish (es.yml)
+es:
+  graphql:
+    field:
+      query:
+        hello: "Devuelve un mensaje de saludo"
+    object:
+      user: "Representa un usuario en el sistema"
+```
+</CodeGroup>
+
+<Info>
+Translations are retrieved during introspection or when generating documentation.
+</Info>
+
+## I18n Scopes
+
+The gem uses configurable scopes to find translations:
+
+```ruby
+# From docs/guides/i18n.md - default configuration
+config.i18n_scopes = [
+  'graphql.%{namespace}.%{kind}.%{parent}.%{name}',
+  'graphql.%{namespace}.%{kind}.%{name}',
+  'graphql.%{namespace}.%{name}',
+  'graphql.%{kind}.%{parent}.%{name}',
+  'graphql.%{kind}.%{name}',
+  'graphql.%{name}',
+]
+```
+
+### Scope Variables
+
+<ResponseField name="namespace" type="string">
+  The namespace of the component (e.g., `base`, `admin`, `public`)
+</ResponseField>
+
+<ResponseField name="kind" type="string">
+  Component type: `scalar`, `object`, `interface`, `union`, `enum`, `input_object`, `schema`, `field`, `argument`, or `directive`
+</ResponseField>
+
+<ResponseField name="parent" type="string">
+  Parent component name (e.g., type name for fields, field name for arguments)
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Symbolized component name
+</ResponseField>
+
+## Translation Examples
+
+### Schema Translation
+
+Given this schema:
+
+```ruby
+# app/graphql/sample_schema.rb
+module GraphQL
+  class SampleSchema < GraphQL::Schema
+    namespace :sample
+    
+    object 'User' do
+      field(:name)
+    end
+    
+    query_fields do
+      field(:hello) { argument(:world) }
+    end
+  end
+end
+```
+
+### Schema Description
+
+**Scope order checked:**
+
+```ruby
+[
+  "graphql.sample.schema.schema",
+  "graphql.sample.schema",
+  "graphql.schema.schema",
+  "graphql.schema",
+]
+```
+
+<CodeGroup>
+```yaml Specific
+en:
+  graphql:
+    sample:
+      schema: "Sample API Schema"
+```
+
+```yaml General
+en:
+  graphql:
+    schema: "GraphQL API Schema"
+```
+</CodeGroup>
+
+### Field Description
+
+**Variables:** `namespace: "sample"`, `kind: "field"`, `parent: "query"`, `name: "hello"`
+
+**Scope order:**
+
+```ruby
+[
+  "graphql.sample.field.query.hello",
+  "graphql.sample.field.hello",
+  "graphql.sample.hello",
+  "graphql.field.query.hello",
+  "graphql.field.hello",
+  "graphql.hello",
+]
+```
+
+<CodeGroup>
+```yaml Specific to Query
+en:
+  graphql:
+    sample:
+      field:
+        query:
+          hello: "Returns a hello message"
+```
+
+```yaml Reusable Across Fields
+en:
+  graphql:
+    field:
+      hello: "Generic hello field"
+```
+</CodeGroup>
+
+### Argument Description
+
+**Variables:** `namespace: "sample"`, `kind: "argument"`, `parent: "hello"`, `name: "world"`
+
+**Scope order:**
+
+```ruby
+[
+  "graphql.sample.argument.hello.world",
+  "graphql.sample.argument.world",
+  "graphql.sample.world",
+  "graphql.argument.hello.world",
+  "graphql.argument.world",
+  "graphql.world",
+]
+```
+
+<CodeGroup>
+```yaml Field-Specific
+en:
+  graphql:
+    argument:
+      hello:
+        world: "The world to greet"
+```
+
+```yaml Reusable
+en:
+  graphql:
+    argument:
+      world: "World identifier"
+```
+</CodeGroup>
+
+### Object Description
+
+**Variables:** `namespace: "sample"`, `kind: "object"`, `parent: nil`, `name: "user"`
+
+**Scope order:**
+
+```ruby
+[
+  "graphql.sample.object.user",
+  "graphql.sample.user",
+  "graphql.object.user",
+  "graphql.user",
+]
+```
+
+```yaml
+en:
+  graphql:
+    sample:
+      object:
+        user: "A user in the system"
+      field:
+        user:
+          name: "User's full name"
+```
+
+### Object Field Description
+
+**Variables:** `namespace: "sample"`, `kind: "field"`, `parent: "user"`, `name: "name"`
+
+**Scope order:**
+
+```ruby
+[
+  "graphql.sample.field.user.name",
+  "graphql.sample.field.name",
+  "graphql.sample.name",
+  "graphql.field.user.name",
+  "graphql.field.name",
+  "graphql.name",
+]
+```
+
+## Complete Example
+
+<CodeGroup>
+```ruby Schema Definition
+module GraphQL
+  class BlogSchema < GraphQL::Schema
+    namespace :blog
+    
+    object 'Post' do
+      field :id, :id
+      field :title, :string
+      field :body, :string
+      field :published, :boolean
+    end
+    
+    query_fields do
+      field(:posts, 'Post', array: true) do
+        argument :published, :boolean, null: true
+      end
+      
+      field(:post, 'Post') do
+        argument :id, :id, null: false
+      end
+    end
+  end
+end
+```
+
+```yaml English Translations
+en:
+  graphql:
+    blog:
+      schema: "Blog GraphQL API"
+      
+      object:
+        post: "A blog post"
+      
+      field:
+        query:
+          posts: "List all blog posts"
+          post: "Find a specific post by ID"
+        post:
+          id: "Unique post identifier"
+          title: "Post title"
+          body: "Post content"
+          published: "Publication status"
+      
+      argument:
+        posts:
+          published: "Filter by publication status"
+        post:
+          id: "The post ID to retrieve"
+```
+
+```yaml Spanish Translations
+es:
+  graphql:
+    blog:
+      schema: "API GraphQL del Blog"
+      
+      object:
+        post: "Una publicación del blog"
+      
+      field:
+        query:
+          posts: "Listar todas las publicaciones"
+          post: "Encontrar una publicación específica por ID"
+        post:
+          id: "Identificador único de publicación"
+          title: "Título de la publicación"
+          body: "Contenido de la publicación"
+          published: "Estado de publicación"
+      
+      argument:
+        posts:
+          published: "Filtrar por estado de publicación"
+        post:
+          id: "El ID de la publicación a recuperar"
+```
+</CodeGroup>
+
+## Dynamic Translations
+
+Use interpolation for dynamic content:
+
+<CodeGroup>
+```yaml With Interpolation
+en:
+  graphql:
+    field:
+      user:
+        posts: "Posts by %{user_name}"
+```
+
+```ruby In Code
+# When retrieving description
+description = I18n.t(
+  'graphql.field.user.posts',
+  user_name: current_value.name
+)
+```
+</CodeGroup>
+
+## Namespace-Specific Translations
+
+Separate translations for different API versions:
+
+```yaml
+en:
+  graphql:
+    v1:
+      field:
+        query:
+          users: "List users (deprecated)"
+    
+    v2:
+      field:
+        query:
+          users: "List users with pagination"
+```
+
+## Configuration
+
+### Custom Scopes
+
+Modify the scope resolution order:
+
+```ruby
+# config/initializers/graphql.rb
+Rails::GraphQL.config.i18n_scopes = [
+  'api.graphql.%{namespace}.%{kind}.%{name}',
+  'api.graphql.%{kind}.%{name}',
+  'api.graphql.%{name}',
+]
+```
+
+### Conditional Enabling
+
+Enable i18n only when needed:
+
+```ruby
+# config/initializers/graphql.rb
+Rails::GraphQL.config.enable_i18n = Rails.env.development? || ENV['GRAPHQL_DOCS']
+```
+
+## Collision Handling
+
+Non-string values are skipped:
+
+```yaml
+# This will be skipped
+en:
+  graphql:
+    field:
+      user:
+        metadata:
+          key: "value"  # Hash, not String
+```
+
+<Info>
+If a scope returns anything other than a plain String, that key is skipped and the next scope is checked.
+</Info>
+
+## Best Practices
+
+<Card title="Organize by Namespace" icon="folder-tree">
+  Keep namespace translations in separate files:
+
+  ```
+  config/locales/
+    graphql/
+      en/
+        base.yml
+        admin.yml
+        public.yml
+  ```
+</Card>
+
+<Card title="Use Fallbacks" icon="arrow-down">
+  Structure translations from specific to general:
+
+  ```yaml
+  en:
+    graphql:
+      # Specific
+      admin:
+        field:
+          query:
+            users: "Admin user list"
+      
+      # General fallback
+      field:
+        query:
+          users: "User list"
+  ```
+</Card>
+
+<Card title="Document in YAML" icon="file-lines">
+  Use YAML for documentation instead of code:
+
+  ```ruby
+  # Instead of this:
+  field(:name, :string, desc: "User's name")
+  
+  # Do this:
+  field(:name, :string)
+  # Description in config/locales/graphql/en.yml
+  ```
+</Card>
+
+<Card title="Test Translations" icon="vial">
+  Verify translations are loaded:
+
+  ```ruby
+  I18n.with_locale(:es) do
+    description = GraphQL::BlogSchema[:query][:posts].description
+    assert_equal "Listar todas las publicaciones", description
+  end
+  ```
+</Card>
+
+## Performance Optimization
+
+<Card title="Cache Translations" icon="gauge-high">
+  Cache description lookups:
+
+  ```ruby
+  def description(locale = I18n.locale)
+    @descriptions ||= {}
+    @descriptions[locale] ||= I18n.t(i18n_key, default: @description)
+  end
+  ```
+</Card>
+
+<Card title="Eager Load" icon="bolt">
+  Preload translations for introspection:
+
+  ```ruby
+  # Before introspection
+  I18n.backend.eager_load!
+  ```
+</Card>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Type Map" icon="map" href="/advanced/type-map">
+    How types are resolved for i18n
+  </Card>
+  <Card title="Introspection" icon="magnifying-glass" href="/core/introspection">
+    Using i18n with introspection
+  </Card>
+</CardGroup>

@@ -1,0 +1,416 @@
+---
+title: Type Map
+description: Centralized type storage, resolution, and versioning system for GraphQL components
+---
+
+## Overview
+
+The Type Map is the central index for all GraphQL components in your application. It tracks types, directives, and schemas, ensuring they're properly accessible from their requested scope. The Type Map also provides versioning for cache invalidation.
+
+<Info>
+Inspired by ActiveRecord::Type::TypeMap, the Type Map uses a three-tier index: namespace → base_class → key.
+</Info>
+
+## Architecture
+
+The Type Map index has three levels:
+
+```ruby
+# From lib/rails/graphql/type_map.rb
+@index = Concurrent::Map.new do |h1, key1|                # Namespaces
+  base_class = Concurrent::Map.new do |h2, key2|          # Base classes
+    ensure_base_class!(key2)
+    h2.fetch_or_store(key2, Concurrent::Map.new)          # Items
+  end
+  
+  h1.fetch_or_store(key1, base_class)
+end
+```
+
+<Steps>
+  <Step title="Namespace">
+    The namespace of the element (e.g., `:base`, `:admin`, `:public`)
+  </Step>
+  <Step title="Base Class">
+    One of `:Type`, `:Directive`, or `:Schema`
+  </Step>
+  <Step title="Key">
+    The unique identifier (symbol or string name)
+  </Step>
+</Steps>
+
+## Versioning
+
+The Type Map maintains a version for cache invalidation:
+
+```ruby
+def version
+  @version ||= GraphQL.config.version&.first(8) || SecureRandom.hex(8)
+end
+```
+
+<Tip>
+Cached resources should check the Type Map version and invalidate if it doesn't match.
+</Tip>
+
+## Registration
+
+### Postponed Registration
+
+Components are postponed until the index is consulted:
+
+```ruby
+def postpone_registration(object)
+  source = caller(3).find { |item| item !~ FILTER_REGISTER_TRACE }
+  @pending << [object, source]
+end
+```
+
+<Info>
+Registration is delayed because classes may change after inheritance, and those changes affect registration.
+</Info>
+
+### Actual Registration
+
+When fetching from the Type Map, pending objects are registered:
+
+```ruby
+# From lib/rails/graphql/type_map.rb
+def register(object)
+  namespaces = sanitize_namespaces(namespaces: object.namespaces, exclusive: true)
+  namespaces << :base if namespaces.empty?
+  
+  base_class = find_base_class(object)
+  ensure_base_class!(base_class)
+  
+  # Cache the name, key, and alias proc
+  object_base = namespaces.first
+  object_name = object.gql_name
+  object_key = object.to_sym
+  alias_proc = -> do
+    value = dig(object_base, base_class, object_key)
+    value.is_a?(Proc) ? value.call : value
+  end
+  
+  # Register main type object for both key and name
+  add(object_base, base_class, object_key, object)
+  add(object_base, base_class, object_name, alias_proc)
+  
+  # Register all aliases
+  aliases = object.try(:aliases)
+  aliases&.each do |alias_name|
+    add(object_base, base_class, alias_name, alias_proc)
+  end
+  
+  # Register in remaining namespaces
+  if namespaces.size > 1
+    keys_and_names = [object_key, object_name, *aliases]
+    namespaces.drop(1).product(keys_and_names) do |(namespace, key_or_name)|
+      add(namespace, base_class, key_or_name, alias_proc)
+    end
+  end
+  
+  @objects += 1
+  object
+end
+```
+
+<CodeGroup>
+```ruby Key Registration
+@index[:base][:Type][:string] = Rails::GraphQL::Type::Scalar::StringScalar
+```
+
+```ruby Name Alias
+@index[:base][:Type]['String'] = -> { @index[:base][:Type][:string] }
+```
+
+```ruby Custom Alias
+@index[:base][:Type][:str] = -> { @index[:base][:Type][:string] }
+```
+</CodeGroup>
+
+## Fetching Types
+
+### fetch vs fetch!
+
+<CodeGroup>
+```ruby fetch
+# Returns nil if not found
+Rails::GraphQL.type_map.fetch(:string)
+# => Rails::GraphQL::Type::Scalar::StringScalar
+
+Rails::GraphQL.type_map.fetch(:unknown)
+# => nil
+```
+
+```ruby fetch!
+# Loads dependencies and raises if not found
+Rails::GraphQL.type_map.fetch!(:string)
+# => Rails::GraphQL::Type::Scalar::StringScalar
+
+Rails::GraphQL.type_map.fetch!(:unknown)
+# => Rails::GraphQL::NotFoundError
+```
+
+```ruby Fallback
+# Warns and uses fallback
+Rails::GraphQL.type_map.fetch!(:str, fallback: :string)
+# [GraphQL] Type "str" is not defined, using String instead.
+# => Rails::GraphQL::Type::Scalar::StringScalar
+```
+</CodeGroup>
+
+### With Parameters
+
+```ruby
+Rails::GraphQL.type_map.fetch!(
+  :string,               # key
+  base_class: :Type,     # base_class
+  namespace: :base,      # namespace
+)
+```
+
+<ParamField path="key" type="symbol | string" required>
+  The type key or name to fetch
+</ParamField>
+
+<ParamField path="base_class" type=":Type | :Directive | :Schema" default=":Type">
+  The base class category
+</ParamField>
+
+<ParamField path="namespace" type="symbol | array" default=":base">
+  Namespace(s) to search
+</ParamField>
+
+<ParamField path="exclusive" type="boolean" default="false">
+  Skip searching `:base` namespace
+</ParamField>
+
+<ParamField path="fallback" type="symbol">
+  Fallback key if primary not found
+</ParamField>
+
+## Aliases
+
+Register alternative names for types:
+
+<CodeGroup>
+```ruby Key Alias
+Rails::GraphQL.type_map.register_alias(:str, :string)
+```
+
+```ruby Block Alias
+Rails::GraphQL.type_map.register_alias(:str) do
+  Rails::GraphQL::Type::Scalar::StringScalar
+end
+```
+
+```ruby With Options
+Rails::GraphQL.type_map.register_alias(
+  :user_type,
+  :user,
+  base_class: :Type,
+  namespace: :admin
+)
+```
+</CodeGroup>
+
+<Info>
+Database adapters use aliases to map database types to GraphQL types (e.g., `varchar` → `string`).
+</Info>
+
+## Unregistering
+
+Due to Rails reloader, the Type Map can unregister objects:
+
+```ruby
+# From lib/rails/graphql/type_map.rb
+def unregister(*objects)
+  objects.each do |object|
+    namespaces = sanitize_namespaces(namespaces: object.namespaces, exclusive: true)
+    namespaces << :base if namespaces.empty?
+    base_class = find_base_class(object)
+    
+    if object.kind != :source
+      @index[namespaces.first][base_class][object.to_sym] = nil
+      @objects -= 1
+    end
+    
+    return unless object.const_defined?(NESTED_MODULE, false)
+    
+    nested_mod = object.const_get(NESTED_MODULE, false)
+    nested_mod.constants.each { |name| nested_mod.const_get(name, false).unregister! }
+    object.send(:remove_const, NESTED_MODULE)
+  end
+end
+```
+
+<Warning>
+Unregistering assigns `nil` to the outermost item. Aliases still exist but resolve to `nil`.
+</Warning>
+
+## Callbacks
+
+Register hooks that trigger when types are added:
+
+```ruby
+# From lib/rails/graphql/type_map.rb
+def after_register(name_or_key, base_class: :Type, **xargs, &block)
+  item = fetch(name_or_key, prevent_register: true, base_class: base_class, **xargs)
+  return block.call(item) unless item.nil?
+  
+  namespaces = sanitize_namespaces(**xargs)
+  callback = ->(n, b, result) do
+    return unless b === base_class && (n === :base || namespaces.include?(n))
+    block.call(result)
+    true
+  end
+  
+  callbacks[name_or_key].unshift(callback)
+end
+```
+
+<CodeGroup>
+```ruby Hook Before Registration
+Rails::GraphQL.type_map.after_register(:custom_type) do |type|
+  puts "Custom type registered: #{type.name}"
+end
+
+# Later, when registered
+class CustomType < GraphQL::Type::Object
+end
+# Output: Custom type registered: CustomType
+```
+
+```ruby Immediate Execution
+# If already registered, block executes immediately
+Rails::GraphQL.type_map.after_register(:string) do |type|
+  puts type.gql_name  # Runs immediately
+end
+# Output: String
+```
+</CodeGroup>
+
+<Tip>
+Callbacks are useful for conditionally adding fields to types that may not exist yet.
+</Tip>
+
+## Dependencies
+
+The Type Map lazy-loads dependencies:
+
+```ruby
+def add_dependencies(*list, to:)
+  @dependencies[to].concat(list.flatten.compact)
+end
+
+def load_dependencies!(**xargs)
+  sanitize_namespaces(**xargs).reduce(false) do |result, namespace|
+    next result if (list = @dependencies[namespace]).empty?
+    
+    while (src = list.shift)
+      src.is_a?(Proc) ? src.call : require(src)
+    end
+    
+    true
+  end
+end
+```
+
+### Seed Dependencies
+
+```ruby
+def seed_dependencies!
+  @dependencies[:base] += [
+    "#{__dir__}/type/scalar",
+    "#{__dir__}/type/object",
+    "#{__dir__}/type/interface",
+    "#{__dir__}/type/union",
+    "#{__dir__}/type/enum",
+    "#{__dir__}/type/input",
+    
+    "#{__dir__}/type/scalar/int_scalar",
+    "#{__dir__}/type/scalar/float_scalar",
+    "#{__dir__}/type/scalar/string_scalar",
+    "#{__dir__}/type/scalar/boolean_scalar",
+    "#{__dir__}/type/scalar/id_scalar",
+    
+    "#{__dir__}/directive/deprecated_directive",
+    "#{__dir__}/directive/include_directive",
+    "#{__dir__}/directive/skip_directive",
+    "#{__dir__}/directive/specified_by_directive",
+  ]
+end
+```
+
+## Reading the Index
+
+<CodeGroup>
+```ruby Check Existence
+Rails::GraphQL.type_map.exist?(:string)
+# => true
+
+Rails::GraphQL.type_map.object_exist?(SomeType)
+# => true/false
+```
+
+```ruby List Objects
+Rails::GraphQL.type_map.objects(
+  base_classes: :Type,
+  namespaces: :base
+)
+```
+
+```ruby Iterate
+Rails::GraphQL.type_map.each_from([:base, :admin], base_class: :Type) do |type|
+  puts type.gql_name
+end
+```
+</CodeGroup>
+
+## Inspection
+
+View Type Map statistics:
+
+```ruby
+Rails::GraphQL.type_map.inspect
+# => #<Rails::GraphQL::TypeMap [index]
+#     @namespaces=2
+#     @base_classes=3
+#     @objects=45
+#     @pending=3
+#     @dependencies={base: 15, admin: 0}>
+```
+
+## Module Namespaces
+
+Associate modules with namespaces:
+
+```ruby
+def associate(namespace, mod)
+  @module_namespaces[mod] = namespace
+end
+
+def associated_namespace_of(object)
+  return if @module_namespaces.empty?
+  object.module_parents.find do |mod|
+    ns = @module_namespaces[mod]
+    break ns unless ns.nil?
+  end
+end
+```
+
+<Info>
+When objects have no explicit namespace, the Type Map checks their module parents for associations.
+</Info>
+
+## Related Documentation
+
+<CardGroup cols={2}>
+  <Card title="Sources" icon="bridge" href="/advanced/sources">
+    How sources use the Type Map
+  </Card>
+  <Card title="Global ID" icon="globe" href="/advanced/global-id">
+    GlobalID uses Type Map for resolution
+  </Card>
+</CardGroup>

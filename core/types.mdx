@@ -1,0 +1,358 @@
+---
+title: Types
+description: Understanding the GraphQL type system in Rails GraphQL
+---
+
+Types are the foundation of GraphQL. Every element in a GraphQL schema is a type that defines the structure and capabilities of your API.
+
+## Type System Overview
+
+Rails GraphQL implements all GraphQL spec types:
+
+- **Scalars** - Leaf types that represent concrete data (String, Int, Boolean, etc.)
+- **Objects** - Types with fields that can return other types
+- **Interfaces** - Abstract types that define common fields for objects
+- **Unions** - Types that can return one of several object types
+- **Enums** - Special scalar types restricted to a set of values
+- **Inputs** - Complex input types for mutations and queries
+
+## Type Kinds
+
+The `Type` class in `lib/rails/graphql/type.rb` defines the base type hierarchy:
+
+```ruby
+TYPE::KINDS = %w[Scalar Object Interface Union Enum Input].freeze
+```
+
+Each type has methods to identify its characteristics:
+
+```ruby
+type.kind          # Returns :scalar, :object, :interface, etc.
+type.kind_enum     # Returns "SCALAR", "OBJECT", "INTERFACE", etc.
+type.input_type?   # Is it a valid input type?
+type.output_type?  # Is it a valid output type?
+type.leaf_type?    # Is it a leaf type (scalar/enum)?
+```
+
+## Object Types
+
+Objects are the most common type, organizing fields into logical groups:
+
+<CodeGroup>
+```ruby Class Definition
+module GraphQL
+  class User < GraphQL::Object
+    desc 'A user in the system'
+    
+    field :id, :id, null: false
+    field :name, :string
+    field :email, :string
+    field :role, 'Role'
+  end
+end
+```
+
+```ruby Inline Definition
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    object 'User' do
+      desc 'A user in the system'
+      
+      field :id, :id, null: false
+      field :name, :string
+      field :email, :string
+    end
+  end
+end
+```
+</CodeGroup>
+
+## Interface Types
+
+Interfaces define common fields that multiple objects must implement:
+
+```ruby app/graphql/interfaces/node.rb
+module GraphQL
+  class Node < GraphQL::Interface
+    desc 'An object with a unique ID'
+    
+    field :id, :id, null: false
+    
+    # Define how to resolve concrete types
+    def self.type_for(value, request)
+      request.find_type(value.class.name)
+    end
+  end
+end
+```
+
+### Implementing Interfaces
+
+Objects can implement interfaces to inherit fields:
+
+```ruby app/graphql/objects/user.rb
+module GraphQL
+  class User < GraphQL::Object
+    implements 'Node'
+    
+    # Additional fields
+    field :name, :string
+    field :email, :string
+  end
+end
+```
+
+<Info>
+  By default, implementing an interface imports its fields as proxies. Set `self.abstract = true` on the interface to prevent field imports.
+</Info>
+
+## Union Types
+
+Unions represent a type that could be one of several object types:
+
+```ruby app/graphql/unions/search_result.rb
+module GraphQL
+  class SearchResult < GraphQL::Union
+    desc 'A search result can be a User or Post'
+    
+    append User, Post
+    
+    # Define how to resolve concrete types
+    def self.type_for(value, request)
+      case value
+      when ::User then request.find_type(:user)
+      when ::Post then request.find_type(:post)
+      end
+    end
+  end
+end
+```
+
+<Tabs>
+  <Tab title="Class Reference">
+    ```ruby
+    union 'SearchResult' do
+      append User, Post
+    end
+    ```
+  </Tab>
+  
+  <Tab title="String Reference (Recommended)">
+    ```ruby
+    union 'SearchResult', of_types: %w[User Post]
+    ```
+  </Tab>
+</Tabs>
+
+## Enum Types
+
+Enums restrict values to a predefined set:
+
+```ruby app/graphql/enums/role.rb
+module GraphQL
+  class Role < GraphQL::Enum
+    desc 'User role in the system'
+    
+    add 'ADMIN', desc: 'Administrator with full access'
+    add 'USER', desc: 'Regular user'
+    add 'GUEST', desc: 'Guest with limited access'
+  end
+end
+```
+
+### Index-Based Enums
+
+Convert numeric values to enum strings:
+
+```ruby app/graphql/enums/status.rb
+module GraphQL
+  class Status < GraphQL::Enum
+    add 'PENDING'
+    add 'ACTIVE'
+    add 'INACTIVE'
+    
+    indexed!  # Enable numeric index support
+    
+    # Now: as_json(0) returns "PENDING"
+    # Now: valid_output?(0) returns true
+  end
+end
+```
+
+## Input Types
+
+Inputs organize fields for receiving data:
+
+```ruby app/graphql/inputs/user_input.rb
+module GraphQL
+  class UserInput < GraphQL::Input
+    desc 'Input for creating or updating users'
+    
+    field :name, :string, null: false
+    field :email, :string, null: false
+    field :role, 'Role', default: 'USER'
+  end
+end
+```
+
+Input instances provide convenient methods:
+
+```ruby
+def create_user(user:)
+  # user is a UserInput instance
+  user.args.name     # Access individual fields
+  user.params        # Get sanitized hash
+  user.resource      # Get assigned resource (if configured)
+end
+```
+
+## Scalar Types
+
+Scalars represent leaf values. Rails GraphQL includes:
+
+**Spec Scalars:**
+- `ID`, `Int`, `Float`, `String`, `Boolean`
+
+**Extended Scalars:**
+- `Bigint` - Large integers as strings
+- `Binary` - Base64 encoded data
+- `Date` - ISO 8601 dates
+- `DateTime` - ISO 8601 timestamps
+- `Decimal` - High-precision decimals as strings
+- `JSON` - Unstructured JSON data
+- `Time` - Time durations
+
+### Custom Scalars
+
+Create custom scalars by defining transformation methods:
+
+```ruby app/graphql/scalars/email_scalar.rb
+module GraphQL
+  class EmailScalar < GraphQL::Scalar
+    desc 'A valid email address'
+    
+    class << self
+      def valid_input?(value)
+        value.is_a?(String) && value.match?(URI::MailTo::EMAIL_REGEXP)
+      end
+      
+      def valid_output?(value)
+        value.is_a?(String)
+      end
+      
+      def to_json(value)
+        value.to_json
+      end
+      
+      def as_json(value)
+        value.to_s
+      end
+      
+      def deserialize(value)
+        value.to_s.downcase
+      end
+    end
+  end
+end
+```
+
+## Type Characteristics
+
+Every type has specific characteristics defined by the base class:
+
+```ruby
+# Check type classification
+type.scalar?      # Is it a scalar?
+type.object?      # Is it an object?
+type.interface?   # Is it an interface?
+type.union?       # Is it a union?
+type.enum?        # Is it an enum?
+type.input?       # Is it an input?
+
+# Check type capabilities
+type.input_type?  # Can it be used as input?
+type.output_type? # Can it be used as output?
+type.leaf_type?   # Is it a leaf (scalar/enum)?
+```
+
+## Type Names and Aliases
+
+Types are registered with the Type Map using their names:
+
+```ruby
+# GraphQL name (camelCase)
+type.gql_name      # "User"
+type.graphql_name  # "User" (alias)
+
+# Type kind
+type.kind          # :object
+type.to_sym        # :object
+
+# Base type
+type.base_type     # GraphQL::Object
+```
+
+## Type Registration
+
+Types are automatically registered when defined:
+
+```ruby
+# Check registration
+GraphQL::User.registered?  # true
+
+# Find types
+GraphQL.type_map.fetch(:user)
+GraphQL::AppSchema.find_type(:user)
+
+# Unregister (during development/testing)
+GraphQL::User.unregister!
+```
+
+## Type Creation Helpers
+
+Schemas provide helper methods for creating types inline:
+
+```ruby
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Each type kind has a helper method
+    scalar 'CustomScalar'
+    object 'User' do
+      field :id
+    end
+    interface 'Node'
+    union 'Result', of_types: %w[User Post]
+    enum 'Status', values: %i[active inactive]
+    input 'UserInput' do
+      field :name
+    end
+  end
+end
+```
+
+<Note>
+  These methods use the `Type::Creator` class to dynamically generate type classes at runtime.
+</Note>
+
+## Type Validation
+
+Types are validated when the schema loads:
+
+```ruby
+# Validate a type
+GraphQL::User.validate!
+
+# Check if validated
+GraphQL::User.valid?
+
+# Validate schema (validates all types)
+GraphQL::AppSchema.validate!
+```
+
+## Best Practices
+
+1. **Use separate files** - Define one type per file for clarity
+2. **Add descriptions** - Document all types with `desc`
+3. **Use string references** - Reference types by name, not class
+4. **Organize by kind** - Group types in `objects/`, `inputs/`, `enums/` folders
+5. **Load dependencies** - Declare all dependencies in your schema

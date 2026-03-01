@@ -1,0 +1,203 @@
+---
+title: Generators
+description: Rails generators to scaffold GraphQL schemas, controllers, channels, and more
+---
+
+Rails GraphQL provides a set of generators to help you quickly scaffold your GraphQL application. These generators create the necessary files and folder structure to get you started.
+
+## graphql:install
+
+Add an initial setup to your application with configuration, schema, folder structure, and routes.
+
+### Usage
+
+```bash
+rails g graphql:install
+```
+
+### Arguments
+
+<ParamField path="schema" type="string" default="AppSchema">
+  The name of the schema to create
+</ParamField>
+
+### Options
+
+<ParamField path="directory" type="string" default="app/graphql">
+  Where to put the GraphQL files
+</ParamField>
+
+<ParamField path="skip_keeps" type="boolean" default="false">
+  Skip creating .keep files and respective folders
+</ParamField>
+
+<ParamField path="skip_routes" type="boolean" default="false">
+  Skip adding GraphQL routes
+</ParamField>
+
+### What It Creates
+
+The install generator creates the following structure:
+
+```
+app/
+  graphql/
+    directives/
+    enums/
+    fields/
+    inputs/
+    interfaces/
+    mutations/
+    object/
+    queries/
+    scalars/
+    sources/
+    subscriptions/
+    unions/
+    app_schema.rb
+config/
+  initializers/
+    graphql.rb
+  routes.rb
+```
+
+### Generated Routes
+
+The following routes are added to `config/routes.rb`:
+
+```ruby config/routes.rb
+get  "/graphql/describe", to: "graphql/base#describe"
+get  "/graphiql",         to: "graphql/base#graphiql"
+post "/graphql",          to: "graphql/base#execute"
+```
+
+### Configuration File
+
+The generator creates `config/initializers/graphql.rb` with common settings:
+
+```ruby config/initializers/graphql.rb
+Rails::GraphQL.configure do |config|
+  # Enable introspection (disabled in production by default)
+  config.enable_introspection = !Rails.env.production?
+
+  # Enable I18n descriptions for multi-language documentation
+  config.enable_i18n_descriptions = true
+
+  # Additional configuration options available...
+end
+```
+
+<Info>
+The install generator automatically invokes the `graphql:schema` generator to create your main schema file.
+</Info>
+
+## graphql:schema
+
+Create a new GraphQL schema inside the `graphql` folder.
+
+### Usage
+
+```bash
+rails g graphql:schema SampleSchema
+```
+
+### Arguments
+
+<ParamField path="schema" type="string" default="AppSchema">
+  The name of the schema to create
+</ParamField>
+
+### Options
+
+<ParamField path="directory" type="string" default="app/graphql">
+  Where to put the schema file
+</ParamField>
+
+### Generated Schema
+
+```ruby app/graphql/sample_schema.rb
+module GraphQL
+  class SampleSchema < GraphQL::Schema
+  end
+end
+```
+
+The generated schema inherits from `GraphQL::Schema` and is ready for customization with queries, mutations, and subscriptions.
+
+<CardGroup cols={1}>
+  <Card title="Learn more about schemas" icon="diagram-project" href="/guides/schemas">
+    Understand how to configure and customize your GraphQL schemas
+  </Card>
+</CardGroup>
+
+## graphql:controller
+
+Create a new controller that handles GraphQL requests with the `GraphQL::Controller` concern.
+
+### Usage
+
+```bash
+rails g graphql:controller SampleController
+```
+
+### Arguments
+
+<ParamField path="name" type="string" default="GraphQLController">
+  The name of the controller to create
+</ParamField>
+
+### Generated Controller
+
+```ruby app/controllers/sample_controller.rb
+class SampleController < ApplicationController
+  include GraphQL::Controller
+end
+```
+
+The `GraphQL::Controller` concern provides methods for:
+- Executing GraphQL queries
+- Handling introspection requests
+- Serving GraphiQL interface
+- Managing request context
+
+<CardGroup cols={1}>
+  <Card title="Customize your controller" icon="code" href="/guides/customizing/controller">
+    Learn how to customize the GraphQL controller for your needs
+  </Card>
+</CardGroup>
+
+## graphql:channel
+
+Create a new Action Cable channel for GraphQL subscriptions with the `GraphQL::Channel` concern.
+
+### Usage
+
+```bash
+rails g graphql:channel SampleChannel
+```
+
+### Arguments
+
+<ParamField path="name" type="string" default="GraphQLChannel">
+  The name of the channel to create
+</ParamField>
+
+### Generated Channel
+
+```ruby app/channels/sample_channel.rb
+class SampleChannel < ApplicationCable::Channel
+  include GraphQL::Channel
+end
+```
+
+The `GraphQL::Channel` concern enables real-time GraphQL subscriptions over WebSockets using Action Cable.
+
+<CardGroup cols={1}>
+  <Card title="Customize your channel" icon="tower-broadcast" href="/guides/customizing/channel">
+    Explore channel customization options for subscriptions
+  </Card>
+</CardGroup>
+
+<Warning>
+More generators will be delivered for version 1.0.0, including generators for types, fields, and other GraphQL components.
+</Warning>

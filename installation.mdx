@@ -1,0 +1,261 @@
+---
+title: Installation
+description: Install and configure Rails GraphQL in your Rails application
+---
+
+Rails GraphQL is distributed as a Ruby gem and integrates seamlessly with Rails applications. This guide covers installation, configuration, and verification.
+
+## Requirements
+
+Before installing Rails GraphQL, ensure your environment meets these requirements:
+
+<CardGroup cols={2}>
+  <Card title="Rails" icon="gem">
+    **Rails 6.0 or higher**
+    
+    Rails GraphQL is built to integrate with modern Rails conventions
+  </Card>
+  <Card title="Ruby" icon="ruby">
+    **Ruby 2.6.3 or higher**
+    
+    Required for the C-based parser to compile correctly
+  </Card>
+</CardGroup>
+
+<Info>
+  Rails GraphQL uses a custom C-based parser for exceptional performance. The gem will compile native extensions during installation.
+</Info>
+
+## Installation
+
+<Steps>
+  <Step title="Add the gem">
+    Add Rails GraphQL to your Gemfile:
+
+    ```bash
+    bundle add rails-graphql
+    ```
+
+    Or add it manually to your `Gemfile`:
+
+    ```ruby Gemfile
+    gem 'rails-graphql'
+    ```
+
+    Then install:
+
+    ```bash
+    bundle install
+    ```
+  </Step>
+
+  <Step title="Run the generator">
+    Rails GraphQL provides a generator to set up the basic structure:
+
+    ```bash
+    rails g graphql:install
+    ```
+
+    This generator creates:
+
+    - `app/graphql/app_schema.rb` - Your main GraphQL schema
+    - `app/controllers/graphql_controller.rb` - Controller for handling GraphQL requests
+    - Route configuration in `config/routes.rb`
+
+    <Tip>
+      The install generator is a shortcut that runs both `graphql:schema` and `graphql:controller` generators. You can run them separately if needed.
+    </Tip>
+  </Step>
+
+  <Step title="Configure the route">
+    The generator adds a route to `config/routes.rb`:
+
+    ```ruby config/routes.rb
+    Rails.application.routes.draw do
+      post '/graphql', to: 'graphql#execute'
+    end
+    ```
+
+    You can customize the endpoint path as needed:
+
+    ```ruby config/routes.rb
+    post '/api/graphql', to: 'graphql#execute'
+    # or
+    post '/api/v1/graphql', to: 'graphql#execute'
+    ```
+  </Step>
+
+  <Step title="Verify installation">
+    Start your Rails server and verify the installation:
+
+    ```bash
+    rails server
+    ```
+
+    Test the endpoint with a simple introspection query:
+
+    ```bash
+    curl -d '{"query":"{ __typename }"}' \
+         -H "Content-Type: application/json" \
+         -X POST http://localhost:3000/graphql
+    ```
+
+    You should receive:
+
+    ```json
+    {"data":{"__typename":"Query"}}
+    ```
+  </Step>
+</Steps>
+
+## Directory structure
+
+After installation, your GraphQL code lives in `app/graphql/`. This directory works differently from standard Rails folders:
+
+```
+/ app
+  / graphql            # Consider this the root of your GraphQL app
+    - app_schema.rb    # Your main schema
+    / objects          # GraphQL object types
+    / inputs           # Input types for mutations
+    / interfaces       # Interface types
+    / unions           # Union types
+    / enums            # Enum types
+    / scalars          # Custom scalar types
+    / queries          # Query field definitions
+    / mutations        # Mutation field definitions
+    / subscriptions    # Subscription field definitions
+    / sources          # ActiveRecord bridges
+    / directives       # Custom directives
+    / fields           # Reusable field definitions
+```
+
+<Note>
+  These directories are not created automatically. Create them as needed when organizing your GraphQL schema.
+</Note>
+
+### Module structure
+
+All GraphQL classes must be inside the `GraphQL` module to avoid naming collisions:
+
+```ruby app/graphql/objects/user.rb
+# Correct
+class GraphQL::User < GraphQL::Object
+end
+
+# Not: class User < GraphQL::Object
+```
+
+<Info>
+  This structure is 100% compatible with Zeitwerk, Rails' autoloader.
+</Info>
+
+## Configuration options
+
+Rails GraphQL provides several configuration options. Create an initializer to customize behavior:
+
+```ruby config/initializers/graphql.rb
+Rails::GraphQL.configure do |config|
+  # Enable or disable introspection (disable in production for security)
+  config.enable_introspection = true
+
+  # Set cache store (defaults to Rails.cache)
+  config.cache = ActiveSupport::Cache::MemoryStore.new
+
+  # Default response format (:hash or :json)
+  config.default_response_format = :hash
+
+  # Enable string collector for better performance
+  config.enable_string_collector = true
+end
+```
+
+### Schema-specific configuration
+
+You can also configure individual schemas:
+
+```ruby app/graphql/app_schema.rb
+module GraphQL
+  class AppSchema < GraphQL::Schema
+    # Configure this schema
+    config.enable_introspection = false
+    config.cache = CustomCacheStore.new
+
+    # Define your fields...
+  end
+end
+```
+
+## Controller setup
+
+The generated controller includes the `GraphQL::Controller` module:
+
+```ruby app/controllers/graphql_controller.rb
+class GraphQLController < ApplicationController
+  include GraphQL::Controller
+
+  # Skip CSRF token verification for API requests
+  skip_before_action :verify_authenticity_token
+end
+```
+
+<Warning>
+  Only skip CSRF token verification if your GraphQL endpoint is intended as an API. If you're using GraphQL with web forms, keep CSRF protection enabled.
+</Warning>
+
+### Adding authentication
+
+You can add authentication to your GraphQL controller:
+
+```ruby app/controllers/graphql_controller.rb
+class GraphQLController < ApplicationController
+  include GraphQL::Controller
+
+  before_action :authenticate_user!
+  skip_before_action :verify_authenticity_token
+
+  private
+
+  def graphql_context
+    { current_user: current_user }
+  end
+end
+```
+
+## Using generators
+
+Rails GraphQL provides several generators to speed up development:
+
+```bash
+# Generate a schema
+rails g graphql:schema
+
+# Generate a controller
+rails g graphql:controller
+
+# Generate an object type
+rails g graphql:object User
+
+# Generate a mutation
+rails g graphql:mutation CreateUser
+
+# Generate a query
+rails g graphql:query Users
+```
+
+<Tip>
+  Run `rails g` to see all available GraphQL generators.
+</Tip>
+
+## Next steps
+
+Now that Rails GraphQL is installed, you're ready to build your first schema:
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Build your first GraphQL query
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how Rails GraphQL works
+  </Card>
+</CardGroup>

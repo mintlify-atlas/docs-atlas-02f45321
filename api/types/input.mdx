@@ -1,0 +1,409 @@
+---
+title: "Input Type"
+description: "Define GraphQL input object types for structured argument data"
+---
+
+## Overview
+
+Input objects define a set of input fields. Input fields can be scalars, enums, or other input objects. Input types are used for complex argument structures.
+
+**Inherits from:** `Rails::GraphQL::Type`
+
+**Specification:** [GraphQL Input Object Type Definition](http://spec.graphql.org/June2018/#InputObjectTypeDefinition)
+
+## Class Attributes
+
+<ParamField path="field_type" type="Class" default="Field::InputField">
+  The type of field class used for input fields
+</ParamField>
+
+<ParamField path="valid_field_types" type="Array<Class>">
+  Valid types that can be used in input fields:
+  - `Type::Enum`
+  - `Type::Input`
+  - `Type::Scalar`
+</ParamField>
+
+## Class Methods
+
+### `gql_name`
+
+Get the GraphQL name of the input type, with optional auto-suffix.
+
+<ResponseField name="return" type="String">
+  The GraphQL name, with suffix applied based on `auto_suffix_input_objects` config
+</ResponseField>
+
+```ruby
+class UserInput < GraphQL::InputType
+end
+
+# With auto_suffix_input_objects = "Input"
+UserInput.gql_name # => "UserInput"
+```
+
+### `valid_input?(value)`
+
+Check if a value is valid input for this input type.
+
+<ParamField path="value" type="Hash | Object" required>
+  The value to validate
+</ParamField>
+
+<ResponseField name="return" type="Boolean">
+  Returns `true` if the value is valid
+</ResponseField>
+
+<Expandable title="Validation Logic">
+**Validation Steps:**
+1. Parse hash tokens if needed
+2. Convert to hash via `to_h` if available
+3. Transform keys to camelCase
+4. Merge with default values
+5. Check all fields are present and valid
+6. Ensure no extra fields are provided
+</Expandable>
+
+### `deserialize(value = nil, **value_as_hash)`
+
+Turn input into an instance of the input object.
+
+<ParamField path="value" type="Hash">
+  The input value as a hash
+</ParamField>
+
+<ParamField path="value_as_hash" type="Hash">
+  Alternative: provide value as keyword arguments
+</ParamField>
+
+<ResponseField name="return" type="Input">
+  An input object instance
+</ResponseField>
+
+```ruby
+user_input = UserInput.deserialize(
+  name: "Alice",
+  email: "alice@example.com"
+)
+
+user_input.name # => "Alice"
+```
+
+### `build(value = nil, **value_as_hash)`
+
+Alias for `deserialize`.
+
+### `build_defaults`
+
+Build a hash with default values for all fields.
+
+<ResponseField name="return" type="Hash">
+  Hash mapping field names to their default values
+</ResponseField>
+
+```ruby
+class FilterInput < GraphQL::InputType
+  field :limit, :int, default: 10
+  field :offset, :int, default: 0
+end
+
+FilterInput.build_defaults
+# => { "limit" => 10, "offset" => 0 }
+```
+
+### `as_json(value)`
+
+Transform value to its JSON hash representation.
+
+<ParamField path="value" type="Hash | Input" required>
+  The value to serialize
+</ParamField>
+
+<ResponseField name="return" type="Hash">
+  Hash with GraphQL field names as keys
+</ResponseField>
+
+### `to_json(value)`
+
+Transform value to a JSON string.
+
+<ParamField path="value" type="Hash | Input" required>
+  The value to serialize
+</ParamField>
+
+<ResponseField name="return" type="String">
+  JSON string representation
+</ResponseField>
+
+## Instance Methods
+
+### `initialize(args = nil, **xargs)`
+
+Create a new input instance.
+
+<ParamField path="args" type="OpenStruct">
+  The deserialized arguments
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Arguments as keyword parameters
+</ParamField>
+
+```ruby
+input = UserInput.new(name: "Alice", email: "alice@example.com")
+```
+
+### `args`
+
+Access the underlying arguments as an OpenStruct.
+
+<ResponseField name="return" type="OpenStruct">
+  Frozen OpenStruct containing all field values
+</ResponseField>
+
+### `params`
+
+Get arguments as a parameter hash.
+
+<ResponseField name="return" type="Hash">
+  Hash with Ruby-style (underscored) keys, with nested inputs converted to params
+</ResponseField>
+
+```ruby
+input = UserInput.new(first_name: "Alice")
+input.params # => { first_name: "Alice" }
+```
+
+### `resource(*args, **xargs, &block)`
+
+Get or create an instance of the assigned class.
+
+<ParamField path="args" type="Array">
+  Additional arguments for the assigned class constructor
+</ParamField>
+
+<ParamField path="xargs" type="Hash">
+  Additional keyword arguments merged with params
+</ParamField>
+
+<ResponseField name="return" type="Object | nil">
+  Instance of the assigned class, or `nil` if no class assigned
+</ResponseField>
+
+```ruby
+class UserInput < GraphQL::InputType
+  self.assigned_to = User
+  
+  field :name, :string
+  field :email, :string
+end
+
+input = UserInput.new(name: "Alice", email: "alice@example.com")
+user = input.resource # => User.new(name: "Alice", email: "alice@example.com")
+```
+
+### `args_as_json`
+
+Convert all arguments to their JSON representation.
+
+<ResponseField name="return" type="Hash">
+  Hash with all values serialized via `as_json`
+</ResponseField>
+
+### `args_to_json`
+
+Convert all arguments to a JSON string.
+
+<ResponseField name="return" type="String">
+  JSON string of all arguments
+</ResponseField>
+
+### `validate!(*)`
+
+Validate all field values in the input instance.
+
+<Expandable title="Validation Behavior">
+Raises `InvalidValueError` if any field value is invalid. Collects all validation errors before raising.
+</Expandable>
+
+```ruby
+input = UserInput.new(name: "Alice")
+input.validate! # May raise InvalidValueError
+```
+
+### `to_h`
+
+Delegate to `args.to_h`.
+
+### `[]`
+
+Access field values by key (delegates to `args`).
+
+### `to_global_id` / `to_gid` / `to_gid_param`
+
+Convert the input to a GlobalID representation.
+
+<ResponseField name="return" type="GlobalID">
+  GlobalID instance for this input
+</ResponseField>
+
+## Instance Attributes
+
+<ParamField path="assignment_error" type="Exception">
+  Stores any error that occurred when loading the assigned class
+</ParamField>
+
+<ParamField path="resource" type="Object">
+  Cached instance of the assigned class
+</ParamField>
+
+## Included Modules
+
+<ParamField path="Helpers::WithAssignment">
+  Allows assignment to Ruby classes via `assigned_to`
+</ParamField>
+
+<ParamField path="Helpers::WithFields">
+  Provides field definition and management methods
+</ParamField>
+
+## Configuration
+
+```ruby
+class CreateUserInput < GraphQL::InputType
+  description "Input for creating a new user"
+  
+  # Assign to a Ruby class
+  self.assigned_to = User
+  
+  field :name, :string, null: false
+  field :email, :string, null: false
+  field :role, UserRoleEnum, default: "viewer"
+  field :metadata, :json
+end
+```
+
+## Usage Examples
+
+### Basic Input
+
+```ruby
+class FilterInput < GraphQL::InputType
+  field :search, :string
+  field :limit, :int, default: 20
+  field :offset, :int, default: 0
+end
+
+field :users, [UserType] do
+  argument :filter, FilterInput
+  
+  resolve ->(obj, args, ctx) {
+    filter = args.filter
+    User.where("name LIKE ?", "%#{filter.search}%")
+        .limit(filter.limit)
+        .offset(filter.offset)
+  }
+end
+```
+
+### Nested Input Objects
+
+```ruby
+class AddressInput < GraphQL::InputType
+  field :street, :string
+  field :city, :string
+  field :country, :string
+end
+
+class CreateUserInput < GraphQL::InputType
+  field :name, :string, null: false
+  field :email, :string, null: false
+  field :address, AddressInput
+end
+```
+
+### With Resource Mapping
+
+```ruby
+class UpdateUserInput < GraphQL::InputType
+  self.assigned_to = User
+  
+  field :name, :string
+  field :email, :string
+end
+
+mutation :update_user do
+  argument :id, :id, null: false
+  argument :input, UpdateUserInput, null: false
+  
+  type UserType
+  
+  resolve ->(obj, args, ctx) {
+    user = User.find(args.id)
+    # Get params hash for update
+    user.update!(args.input.params)
+    user
+  }
+end
+```
+
+### Accessing Values
+
+```ruby
+input = CreateUserInput.new(
+  name: "Alice",
+  email: "alice@example.com",
+  role: "admin"
+)
+
+# Access via method
+input.name # => "Alice" (via delegate_missing_to)
+
+# Access via args
+input.args.email # => "alice@example.com"
+
+# Access via hash
+input[:role] # => "admin"
+
+# Get as params
+input.params # => { name: "Alice", email: "alice@example.com", role: "admin" }
+```
+
+## Special Features
+
+### Automatic Name Suffixing
+
+Based on the `auto_suffix_input_objects` configuration, input type names are automatically suffixed:
+
+```ruby
+# With config.auto_suffix_input_objects = "Input"
+class User < GraphQL::InputType
+end
+
+User.gql_name # => "UserInput"
+```
+
+### Default Values
+
+Fields can specify default values that are automatically merged during deserialization:
+
+```ruby
+class PaginationInput < GraphQL::InputType
+  field :page, :int, default: 1
+  field :per_page, :int, default: 25
+end
+
+input = PaginationInput.deserialize({}) # No values provided
+input.page # => 1
+input.per_page # => 25
+```
+
+### Delegate Missing
+
+Input instances delegate unknown methods to the `resource` object, allowing seamless integration with assigned classes.
+
+## Related Types
+
+- [Scalar](/api/types/scalar) - Use as input field types
+- [Enum](/api/types/enum) - Use as input field types
+- [Arguments](/api/arguments) - Alternative for simple field arguments
