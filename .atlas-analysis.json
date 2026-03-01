@@ -1,0 +1,189 @@
+{
+  "projectType": "framework",
+  "projectName": "Rails GraphQL",
+  "projectDescription": "A fresh GraphQL server for Rails applications with a natural, Ruby-like DSL and outstanding performance",
+  "theme": "aspen",
+  "primaryColor": "#CC342D",
+  "lightColor": "#E85D4A",
+  "darkColor": "#A22A23",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core/schemas",
+              "core/types",
+              "core/fields",
+              "core/queries",
+              "core/mutations",
+              "core/subscriptions",
+              "core/directives",
+              "core/scalars"
+            ]
+          },
+          {
+            "group": "Advanced Features",
+            "pages": [
+              "advanced/sources",
+              "advanced/activerecord-integration",
+              "advanced/type-map",
+              "advanced/global-id",
+              "advanced/events",
+              "advanced/error-handling",
+              "advanced/authorization",
+              "advanced/i18n"
+            ]
+          },
+          {
+            "group": "Type System",
+            "pages": [
+              "types/objects",
+              "types/interfaces",
+              "types/unions",
+              "types/enums",
+              "types/inputs",
+              "types/arguments"
+            ]
+          },
+          {
+            "group": "Tools & Testing",
+            "pages": [
+              "tools/generators",
+              "tools/introspection",
+              "tools/testing",
+              "tools/parser"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/schema",
+              "api/type",
+              "api/field",
+              "api/directive",
+              "api/request"
+            ]
+          },
+          {
+            "group": "Type Classes",
+            "pages": [
+              "api/types/object",
+              "api/types/interface",
+              "api/types/union",
+              "api/types/enum",
+              "api/types/input",
+              "api/types/scalar"
+            ]
+          },
+          {
+            "group": "Sources",
+            "pages": [
+              "api/source",
+              "api/activerecord-source"
+            ]
+          },
+          {
+            "group": "Execution",
+            "pages": [
+              "api/callback",
+              "api/event",
+              "api/collectors"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "api/config",
+              "api/type-map",
+              "api/global-id"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Integration",
+            "pages": [
+              "guides/controller",
+              "guides/channel",
+              "guides/action-cable-subscriptions"
+            ]
+          },
+          {
+            "group": "Advanced Topics",
+            "pages": [
+              "guides/alternatives",
+              "guides/field-lists",
+              "guides/fragments",
+              "guides/persisted-queries",
+              "guides/recommendations"
+            ]
+          },
+          {
+            "group": "Customization",
+            "pages": [
+              "guides/custom-directives",
+              "guides/custom-scalars",
+              "guides/custom-sources",
+              "guides/namespaces"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Custom C-based GraphQL parser with outstanding performance",
+    "Natural Ruby-like DSL designed for Rails developers",
+    "Full ActiveRecord integration with PostgreSQL, MySQL, and SQLite",
+    "Built-in subscription support via ActionCable",
+    "Type map system for centralized type management",
+    "Sources bridge for connecting classes to GraphQL types",
+    "Event-driven directive system",
+    "Extended scalar types (bigint, binary, date, datetime, decimal, json, time)",
+    "Rails generators for quick scaffolding",
+    "Global ID support for all GraphQL objects",
+    "Comprehensive error handling with rescue_from",
+    "Testing utilities for validating documents and stubbing values"
+  ],
+  "publicApiSurface": [
+    "Rails::GraphQL::Schema",
+    "Rails::GraphQL::Type",
+    "Rails::GraphQL::Type::Object",
+    "Rails::GraphQL::Type::Interface",
+    "Rails::GraphQL::Type::Union",
+    "Rails::GraphQL::Type::Enum",
+    "Rails::GraphQL::Type::Input",
+    "Rails::GraphQL::Type::Scalar",
+    "Rails::GraphQL::Field",
+    "Rails::GraphQL::Directive",
+    "Rails::GraphQL::Source",
+    "Rails::GraphQL::Source::ActiveRecordSource",
+    "Rails::GraphQL::Request",
+    "Rails::GraphQL::TypeMap",
+    "Rails::GraphQL::GlobalID",
+    "Rails::GraphQL::Event",
+    "Rails::GraphQL::Callback",
+    "Rails::GraphQL::Controller",
+    "Rails::GraphQL::Channel"
+  ]
+}
